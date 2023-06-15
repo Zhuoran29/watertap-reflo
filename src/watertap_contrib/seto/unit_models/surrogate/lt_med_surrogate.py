@@ -745,8 +745,7 @@ class LTMEDData(UnitModelBlockData):
             iscale.get_scaling_factor(self.feed_cool_mass_flow)
             * iscale.get_scaling_factor(
                 self.cooling_out_props[0].enth_mass_phase["Liq"]
-            )
-            * 1e-3
+            ) * 0.25
         )
         iscale.constraint_scaling_transform(self.eq_feed_cool_mass_flow, sf)
 
