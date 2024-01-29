@@ -54,18 +54,19 @@ from watertap.unit_models.reverse_osmosis_0D import (
 from watertap.examples.flowsheets.RO_with_energy_recovery.RO_with_energy_recovery import (
     calculate_operating_pressure,
 )
-from watertap_contrib.seto.unit_models.surrogate import (
+from watertap_contrib.reflo.unit_models.surrogate import (
     VAGMDSurrogateBase,
+    VAGMDSurrogate,
     LTMEDSurrogate,
 )
 
-from watertap_contrib.seto.costing import (
+from watertap_contrib.reflo.costing import (
     TreatmentCosting,
     EnergyCosting,
-    SETOSystemCosting,
+    REFLOSystemCosting,
 )
 
-from watertap_contrib.seto.core import SETODatabase, PySAMWaterTAP
+from watertap_contrib.reflo.core import REFLODatabase, PySAMWaterTAP
 
 _log = idaeslog.getLogger(__name__)
 solver = get_solver()
@@ -142,10 +143,8 @@ def build_med_md_flowsheet(
 
     TransformationFactory("network.expand_arcs").apply_to(m)
 
-    # print('dof after adding components', degrees_of_freedom(m))
     # Add system constraints
     add_processing_phase_constraint(m.fs, phase, batch_volume, dt)
-    # print('dof after adding cons', degrees_of_freedom(m))
 
     # Initiate the properties that needs to be calculated
     property_initial_value(m.fs)
@@ -154,18 +153,21 @@ def build_med_md_flowsheet(
 
 
 def property_initial_value(mfs):
-    mfs.S1.overflow_state[0].conc_mass_phase_comp["Liq", "TDS"].value = 15
-    mfs.S1.overflow_state[0].flow_vol_phase["Liq"].value = 1
-    mfs.S1.separator_to_mixer_state[0].conc_mass_phase_comp["Liq", "TDS"].value = 15
-    mfs.S1.separator_to_mixer_state[0].flow_vol_phase["Liq"].value = 1
-    mfs.M1.mixed_state[0].conc_mass_phase_comp["Liq", "TDS"].value = 15
-    mfs.M1.mixed_state[0].flow_vol_phase["Liq"].value = 1
-    mfs.M1.MED_brine_state[0].flow_vol_phase["Liq"].value = 1
-    mfs.M1.MD_brine_state[0].flow_vol_phase["Liq"].value = 1
-    mfs.S2.remained_liquid_state[0].conc_mass_phase_comp["Liq", "TDS"].value = 15
-    mfs.S2.remained_liquid_state[0].flow_vol_phase["Liq"].value = 1
-    mfs.M1.remained_liquid_state[0].conc_mass_phase_comp["Liq", "TDS"].value = 15
-    mfs.M1.remained_liquid_state[0].flow_vol_phase["Liq"].value = 1
+    '''
+    Touch the properties that need to be calculated
+    '''
+    mfs.S1.overflow_state[0].conc_mass_phase_comp 
+    mfs.S1.overflow_state[0].flow_vol_phase
+    mfs.S1.separator_to_mixer_state[0].conc_mass_phase_comp
+    mfs.S1.separator_to_mixer_state[0].flow_vol_phase
+    mfs.M1.mixed_state[0].conc_mass_phase_comp
+    mfs.M1.mixed_state[0].flow_vol_phase
+    mfs.M1.MED_brine_state[0].flow_vol_phase
+    mfs.M1.MD_brine_state[0].flow_vol_phase
+    mfs.S2.remained_liquid_state[0].conc_mass_phase_comp
+    mfs.S2.remained_liquid_state[0].flow_vol_phase
+    mfs.M1.remained_liquid_state[0].conc_mass_phase_comp
+    mfs.M1.remained_liquid_state[0].flow_vol_phase
 
 
 def add_processing_phase_constraint(
@@ -197,80 +199,58 @@ def add_processing_phase_constraint(
         doc="Time step of the simulation (s)",
     )
 
-    if phase == "processing":
+    @mfs.Constraint(doc="Calculate time interval of each period")
+    def eq_dt(b):
+        if dt is not None:
+            return b.dt == dt
 
-        @mfs.Constraint(doc="Calculate time interval of each period")
-        def eq_dt(b):
-            if dt:
-                return b.dt == dt
-
-            elif mfs.vagmd.config.module_type == "AS7C1.5L":
-                return b.dt == 20352.55 / pyunits.convert(
-                    mfs.vagmd.feed_props[0].flow_vol_phase["Liq"],
-                    to_units=pyunits.L / pyunits.h,
-                )
-            else:  # module_type == "AS26C7.2L"
-                return b.dt == 73269.19 / pyunits.convert(
-                    mfs.vagmd.feed_props[0].flow_vol_phase["Liq"],
-                    to_units=pyunits.L / pyunits.h,
-                )
-
-        @mfs.Constraint(doc="remained volume is the batch volume")
-        def eq_S2_remained_volume(b):
-            return b.S2.remained_liquid_state[0].flow_vol_phase[
-                "Liq"
-            ] * b.dt == pyunits.convert(
-                batch_volume * pyunits.L, to_units=pyunits.m**3
+        elif mfs.vagmd.config.module_type == "AS7C1.5L":
+            return b.dt == 20352.55 / pyunits.convert(
+                mfs.vagmd.feed_props[0].flow_vol_phase["Liq"],
+                to_units=pyunits.L / pyunits.h,
+            )
+        else:  # module_type == "AS26C7.2L"
+            return b.dt == 73269.19 / pyunits.convert(
+                mfs.vagmd.feed_props[0].flow_vol_phase["Liq"],
+                to_units=pyunits.L / pyunits.h,
             )
 
-        @mfs.Constraint(doc="Split mixed flow to MD feed")
-        def eq_S2_to_vagmd(b):
-            return (
-                b.S2.MD_feed_state[0].flow_vol_phase["Liq"]
-                == b.vagmd.feed_props[0].flow_vol_phase["Liq"]
-            )
+    @mfs.Constraint(doc="remained volume is the batch volume")
+    def eq_S2_remained_volume(b):
+        return b.S2.remained_liquid_state[0].flow_vol_phase[
+            "Liq"
+        ] * b.dt == pyunits.convert(
+            batch_volume * pyunits.L, to_units=pyunits.m**3
+        )
 
-        @mfs.Constraint(doc="Current volume in the mixer")
-        def eq_tank_volume(b):
-            return b.volume_in_tank == b.volume_in_tank_previous + pyunits.convert(
-                b.S1.overflow_state[0].flow_vol_phase["Liq"] * b.dt,
-                to_units=pyunits.m**3,
-            )
+    @mfs.Constraint(doc="Split mixed flow to MD feed")
+    def eq_S2_to_vagmd(b):
+        return (
+            b.S2.MD_feed_state[0].flow_vol_phase["Liq"]
+            == b.vagmd.feed_props[0].flow_vol_phase["Liq"]
+        )
 
-    elif phase == "refilling":
-        # All MED brine goes into the mixer
-        # mfs.S1.overflow_state[0].flow_vol_phase["Liq"].fix(0)
-        @mfs.Constraint(doc="All MED brine goes into the mixer")
-        def eq_separator_overflow(b):
-            return mfs.S1.overflow_state[0].flow_vol_phase["Liq"] == 0
+    @mfs.Constraint(doc="Current volume in the mixer")
+    def eq_tank_volume(b):
+        return b.volume_in_tank == b.volume_in_tank_previous + pyunits.convert(
+            b.S1.overflow_state[0].flow_vol_phase["Liq"] * b.dt,
+            to_units=pyunits.m**3,
+        )
 
-        @mfs.Constraint(doc="Split mixed flow to MD feed")
-        def eq_S2_to_vagmd(b):
-            return (
-                b.S2.MD_feed_state[0].flow_vol_phase["Liq"]
-                == b.vagmd.feed_props[0].flow_vol_phase["Liq"]
-            )
+    @mfs.Expression(doc="Calculate specific thermal energy consumption in VAGMD (kWh/m3)")
+    def vagmd_specific_energy_consumption_thermal(b):
+        return mfs.vagmd.thermal_power / pyunits.convert(
+            mfs.vagmd.permeate_flux * mfs.vagmd.module_area, to_units=pyunits.m**3 / pyunits.h
+        )
 
-        @mfs.Constraint(doc="remained volume remains the same")
-        def eq_S2_remained_volume(b):
-            return b.S2.remained_liquid_state[0].flow_vol_phase[
-                "Liq"
-            ] * b.dt == pyunits.convert(
-                batch_volume * pyunits.L, to_units=pyunits.m**3
-            )
-
-        # @mfs.Constraint(doc="remained volume remains the same")
-        # def eq_M1_remained_volume(b):
-        #     return (b.M1.remained_liquid_state[0].flow_vol_phase["Liq"] * b.dt
-        #             == b.volume_in_tank_previous)
-
-        # @mfs.Constraint(doc='Tank volume becomes zero')
-        # def eq_tank_volume(b):
-        #     return b.volume_in_tank == 0
-
-        mfs.volume_in_tank.fix(0)
-
-
+    @mfs.Expression(doc="Calculate specific electric energy consumption in VAGMD (kWh/m3)")
+    def vagmd_specific_energy_consumption_electric(b):
+        return (
+            mfs.vagmd.feed_pump_power_elec + mfs.vagmd.cooling_pump_power_elec
+        ) / pyunits.convert(
+            mfs.vagmd.permeate_flux * mfs.vagmd.module_area, to_units=pyunits.m**3 / pyunits.h
+        )
+        
 def add_med(fs, inputs):
     """Method to add MED components to an exisitng flowsheet
     Args:
@@ -353,7 +333,6 @@ def add_vagmd(fs, inputs):
     cond_inlet_temp = inputs["cond_inlet_temp"]  # 20 - 30 deg C
     feed_temp = inputs["feed_temp"]  # 20 - 30 deg C
     feed_salinity = inputs["feed_salinity"]  # 35 - 292 g/L
-    # initial_batch_volume = inputs['initial_batch_volume']  #
     recovery_ratio = inputs["recovery_ratio"]  # -
     module_type = inputs["module_type"]
     cooling_system_type = inputs["cooling_system_type"]
@@ -451,29 +430,3 @@ def fix_dof_and_initialize(
 
     return
 
-
-def check_jac(model):
-    jac, jac_scaled, nlp = iscale.constraint_autoscale_large_jac(model, min_scale=1e-8)
-    # cond_number = iscale.jacobian_cond(model, jac=jac_scaled)  # / 1e10
-    # print("--------------------------")
-    print("Extreme Jacobian entries:")
-    extreme_entries = iscale.extreme_jacobian_entries(
-        model, jac=jac_scaled, zero=1e-20, large=10
-    )
-    extreme_entries = sorted(extreme_entries, key=lambda x: x[0], reverse=True)
-
-    print("EXTREME_ENTRIES")
-    print(f"\nThere are {len(extreme_entries)} extreme Jacobian entries")
-    for i in extreme_entries:
-        print(i[0], i[1], i[2])
-
-    print("--------------------------")
-    print("Extreme Jacobian columns:")
-    extreme_cols = iscale.extreme_jacobian_columns(model, jac=jac_scaled)
-    for val, var in extreme_cols:
-        print(val, var.name)
-    print("------------------------")
-    print("Extreme Jacobian rows:")
-    extreme_rows = iscale.extreme_jacobian_rows(model, jac=jac_scaled)
-    for val, con in extreme_rows:
-        print(val, con.name)
