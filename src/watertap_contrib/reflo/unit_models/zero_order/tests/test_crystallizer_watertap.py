@@ -21,10 +21,13 @@ from pyomo.environ import (
 from pyomo.network import Port
 from idaes.core import FlowsheetBlock
 from pyomo.util.check_units import assert_units_consistent
-from watertap_contrib.reflo.unit_models.zero_order.crystallizer_zo_watertap import Crystallization
+from watertap_contrib.reflo.unit_models.zero_order.crystallizer_zo_watertap import (
+    Crystallization,
+)
 import watertap_contrib.reflo.property_models.cryst_prop_pack as props
 
 from idaes.core.solvers import get_solver
+
 # from watertap.core.solvers import get_solver
 from idaes.core.util.model_statistics import (
     degrees_of_freedom,
@@ -621,7 +624,7 @@ class TestCrystallization:
         )
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     m = ConcreteModel()
     m.fs = FlowsheetBlock(dynamic=False)
 
@@ -685,7 +688,7 @@ if __name__=="__main__":
     assert results.solver.status == SolverStatus.ok
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     m = ConcreteModel()
     m.fs = FlowsheetBlock(dynamic=False)
 
@@ -747,7 +750,7 @@ if __name__=="__main__":
     # Check for optimal solution
     assert results.solver.termination_condition == TerminationCondition.optimal
     assert results.solver.status == SolverStatus.ok
-    
+
     b = m.fs.unit
     assert pytest.approx(
         value(

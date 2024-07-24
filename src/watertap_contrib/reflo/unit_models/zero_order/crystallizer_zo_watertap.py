@@ -330,7 +330,7 @@ class CrystallizationData(InitializationMixin, UnitModelBlockData):
                 for p in self.config.property_package.phase_list
                 if (p, j) in b.properties_solids[0].phase_component_set
             )
-        
+
         @self.Constraint()
         def eq_pure_vapor_flow_rate(b):
             return (
@@ -608,7 +608,7 @@ class CrystallizationData(InitializationMixin, UnitModelBlockData):
                     - b.properties_pure_water[0].enth_mass_solvent["Vap"]
                 )
             )
-        
+
     def initialize_build(
         self,
         state_args=None,
@@ -806,7 +806,7 @@ class CrystallizationData(InitializationMixin, UnitModelBlockData):
         for ind, c in self.eq_p_con4.items():
             sf = iscale.get_scaling_factor(self.properties_pure_water[0].pressure)
             iscale.constraint_scaling_transform(c, sf)
-            
+
         for j, c in self.eq_mass_balance_constraints.items():
             sf = iscale.get_scaling_factor(
                 self.properties_in[0].flow_mass_phase_comp["Liq", j]
@@ -847,9 +847,9 @@ class CrystallizationData(InitializationMixin, UnitModelBlockData):
         var_dict["Heat requirement"] = self.work_mechanical[time_point]
         var_dict["Crystallizer diameter"] = self.diameter_crystallizer
         var_dict["Magma circulation flow rate"] = self.magma_circulation_flow_vol
-        var_dict["Vol. frac. of solids in suspension, 1-E"] = (
-            self.product_volumetric_solids_fraction
-        )
+        var_dict[
+            "Vol. frac. of solids in suspension, 1-E"
+        ] = self.product_volumetric_solids_fraction
         var_dict["Residence time"] = self.t_res
         var_dict["Crystallizer minimum active volume"] = self.volume_suspension
         var_dict["Suspension height in crystallizer"] = self.height_slurry

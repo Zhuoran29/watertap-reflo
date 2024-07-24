@@ -18,7 +18,9 @@ from pyomo.network import Port
 from idaes.core import FlowsheetBlock
 import idaes.core.util.scaling as iscale
 from pyomo.util.check_units import assert_units_consistent
-from watertap_contrib.reflo.unit_models.zero_order.crystallizer_zo_watertap import Crystallization
+from watertap_contrib.reflo.unit_models.zero_order.crystallizer_zo_watertap import (
+    Crystallization,
+)
 import watertap_contrib.reflo.property_models.cryst_prop_pack as props
 from watertap.unit_models.mvc.components.lmtd_chen_callback import (
     delta_temperature_chen_callback,
@@ -46,6 +48,7 @@ from idaes.core import UnitModelCostingBlock
 from watertap.costing import WaterTAPCosting, CrystallizerCostType
 
 solver = get_solver()
+
 
 def build_fs_multi_effect_crystallizer(
     m=None,
@@ -78,7 +81,7 @@ def build_fs_multi_effect_crystallizer(
     eff_3 = m.fs.eff_3 = Crystallization(property_package=m.fs.props)
     eff_4 = m.fs.eff_4 = Crystallization(property_package=m.fs.props)
 
-    feed_mass_frac_H2O = 1- feed_mass_frac_NaCl
+    feed_mass_frac_H2O = 1 - feed_mass_frac_NaCl
     eps = 1e-6
 
     eff_1.inlet.flow_mass_phase_comp[0, "Liq", "NaCl"].fix(
@@ -182,6 +185,7 @@ def add_heat_exchanger_eff2(m):
     iscale.set_scaling_factor(eff_2.area, 1e-1)
     iscale.set_scaling_factor(eff_2.overall_heat_transfer_coefficient, 1e-1)
 
+
 def add_heat_exchanger_eff3(m):
     eff_2 = m.fs.eff_2
     eff_3 = m.fs.eff_3
@@ -223,8 +227,7 @@ def add_heat_exchanger_eff3(m):
     def delta_temperature_in_eff3(b, t):
         return (
             eff_3.delta_temperature_in[t]
-            == eff_2.properties_vapor[0].temperature
-            - eff_3.temperature_operating
+            == eff_2.properties_vapor[0].temperature - eff_3.temperature_operating
         )
 
     @m.Constraint(eff_3.flowsheet().time, doc="delta_temperature_out at the 2nd effect")
@@ -290,8 +293,7 @@ def add_heat_exchanger_eff4(m):
     def delta_temperature_in_eff4(b, t):
         return (
             eff_4.delta_temperature_in[t]
-            == eff_3.properties_vapor[0].temperature
-            - eff_4.temperature_operating
+            == eff_3.properties_vapor[0].temperature - eff_4.temperature_operating
         )
 
     @m.Constraint(eff_4.flowsheet().time, doc="delta_temperature_out at the 2nd effect")
@@ -315,20 +317,13 @@ def add_heat_exchanger_eff4(m):
     iscale.set_scaling_factor(eff_4.area, 1e-1)
     iscale.set_scaling_factor(eff_4.overall_heat_transfer_coefficient, 1e-1)
 
+
 def multi_effect_crystallizer_initialization(m):
     # Set scaling factors
-    m.fs.props.set_default_scaling(
-        "flow_mass_phase_comp", 1e-1, index=("Liq", "H2O")
-    )
-    m.fs.props.set_default_scaling(
-        "flow_mass_phase_comp", 1e-1, index=("Liq", "NaCl")
-    )
-    m.fs.props.set_default_scaling(
-        "flow_mass_phase_comp", 1e-1, index=("Vap", "H2O")
-    )
-    m.fs.props.set_default_scaling(
-        "flow_mass_phase_comp", 1e-1, index=("Sol", "NaCl")
-    )
+    m.fs.props.set_default_scaling("flow_mass_phase_comp", 1e-1, index=("Liq", "H2O"))
+    m.fs.props.set_default_scaling("flow_mass_phase_comp", 1e-1, index=("Liq", "NaCl"))
+    m.fs.props.set_default_scaling("flow_mass_phase_comp", 1e-1, index=("Vap", "H2O"))
+    m.fs.props.set_default_scaling("flow_mass_phase_comp", 1e-1, index=("Sol", "NaCl"))
 
     calculate_scaling_factors(m)
 
@@ -338,7 +333,9 @@ def multi_effect_crystallizer_initialization(m):
     m.fs.eff_4.initialize()
 
     # Unfix dof
-    brine_salinity = m.fs.eff_1.properties_in[0].conc_mass_phase_comp["Liq", "NaCl"].value
+    brine_salinity = (
+        m.fs.eff_1.properties_in[0].conc_mass_phase_comp["Liq", "NaCl"].value
+    )
 
     for eff in [m.fs.eff_2, m.fs.eff_3, m.fs.eff_4]:
         eff.inlet.flow_mass_phase_comp[0, "Liq", "NaCl"].unfix()
@@ -353,7 +350,7 @@ def multi_effect_crystallizer_initialization(m):
     @m.Constraint(doc="Energy supplied to the 3rd effect")
     def eqn_energy_from_eff2(b):
         return b.fs.eff_3.work_mechanical[0] == b.fs.eff_2.energy_flow_superheated_vapor
-    
+
     @m.Constraint(doc="Energy supplied to the 4th effect")
     def eqn_energy_from_eff3(b):
         return b.fs.eff_4.work_mechanical[0] == b.fs.eff_3.energy_flow_superheated_vapor
