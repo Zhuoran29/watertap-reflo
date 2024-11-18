@@ -225,10 +225,10 @@ def build_kbhdp_mec(
     first_effect.properties_in[0].flow_mass_phase_comp["Liq", "NaCl"].unfix()
 
     m.fs.mec.control_volume.properties_in[0].flow_mass_phase_comp["Liq", "H2O"].fix(
-        flow_mass_phase_water_per
+        flow_mass_phase_water_total
     )
     m.fs.mec.control_volume.properties_in[0].flow_mass_phase_comp["Liq", "NaCl"].fix(
-        flow_mass_phase_salt_per
+        flow_mass_phase_salt_total
     )
 
     """
@@ -266,7 +266,7 @@ if __name__ == "__main__":
 
     m = build_kbhdp_mec(
         # m=m
-        # flow_in=4,  # MGD
+        flow_in=2.5,  # MGD
         # kbhdp_salinity=12,  # g/L
         # assumed_lssro_recovery=0.95,
         # number_effects=4,
