@@ -167,7 +167,7 @@ def build_kbhdp_mec(
     and to populate the feed concentration to all effects
     """
     for n, eff in m.fs.mec.effects.items():
-        eff.effect.initialize()    
+        eff.effect.initialize()
 
     ### UNFIX THE INLET FLOW RATES OF EACH EFFECT
     """
@@ -191,7 +191,7 @@ def build_kbhdp_mec(
         else:
             assert degrees_of_freedom(eff.effect) == 1
 
-    ### FULLY SOLVE THE MODEL 
+    ### FULLY SOLVE THE MODEL
     """
     Note:
     Keep in mind that we assumes feed flow rate to the 1st effect to be 1 kg/s,
@@ -218,7 +218,7 @@ def build_kbhdp_mec(
 
     calculate_scaling_factors(m)
     results = solver.solve(m)
-    assert_optimal_termination(results)    
+    assert_optimal_termination(results)
 
     ### Release 1st effect flow rate and fix total flow rate instead
     first_effect.properties_in[0].flow_mass_phase_comp["Liq", "H2O"].unfix()
@@ -233,31 +233,33 @@ def build_kbhdp_mec(
 
     """
     Note: Rescaling is probably needed for extremely large feed flow,
-    I tested all the way up to 40 MGD and it's still working so I commented out the 
-    following section at this point.
     """
-    # m.fs.properties.set_default_scaling(
-    #     "flow_mass_phase_comp",
-    #     1 / value(flow_mass_phase_water_per),
-    #     index=("Liq", "H2O"),
-    # )
-    # m.fs.properties.set_default_scaling(
-    #     "flow_mass_phase_comp",
-    #     1 / value(flow_mass_phase_salt_per),
-    #     index=("Liq", "NaCl"),
-    # )
-    # m.fs.properties.set_default_scaling(
-    #     "flow_mass_phase_comp", 10, index=("Vap", "H2O")
-    # )
-    # m.fs.properties.set_default_scaling(
-    #     "flow_mass_phase_comp", 1e-2, index=("Sol", "NaCl")
-    # )
-    # m.fs.vapor_properties.set_default_scaling(
-    #     "flow_mass_phase_comp", 1e-2, index=("Vap", "H2O")
-    # )
-    # m.fs.vapor_properties.set_default_scaling(
-    #     "flow_mass_phase_comp", 1, index=("Liq", "H2O")
-    # )
+    m.fs.properties.set_default_scaling(
+        "flow_mass_phase_comp",
+        1 / value(flow_mass_phase_water_total),
+        index=("Liq", "H2O"),
+    )
+    m.fs.properties.set_default_scaling(
+        "flow_mass_phase_comp",
+        1 / value(flow_mass_phase_salt_total),
+        index=("Liq", "NaCl"),
+    )
+    m.fs.properties.set_default_scaling(
+        "flow_mass_phase_comp", 10, index=("Vap", "H2O")
+    )
+    m.fs.properties.set_default_scaling(
+        "flow_mass_phase_comp", 1e-2, index=("Sol", "NaCl")
+    )
+    m.fs.vapor_properties.set_default_scaling(
+        "flow_mass_phase_comp", 1e-2, index=("Vap", "H2O")
+    )
+    m.fs.vapor_properties.set_default_scaling(
+        "flow_mass_phase_comp", 1, index=("Liq", "H2O")
+    )
+
+    calculate_scaling_factors(m)
+    results = solver.solve(m)
+    assert_optimal_termination(results)
 
     return m
 
@@ -266,7 +268,7 @@ if __name__ == "__main__":
 
     m = build_kbhdp_mec(
         # m=m
-        flow_in=2.5,  # MGD
+        flow_in=2.8,  # MGD
         # kbhdp_salinity=12,  # g/L
         # assumed_lssro_recovery=0.95,
         # number_effects=4,
@@ -278,6 +280,8 @@ if __name__ == "__main__":
     calculate_scaling_factors(m)
 
     assert degrees_of_freedom(m) == 0
-    results = solver.solve(m)
-    assert_optimal_termination(results)
-
+    try:
+        results = solver.solve(m)
+        assert_optimal_termination(results)
+    except:
+        print("Failed")
