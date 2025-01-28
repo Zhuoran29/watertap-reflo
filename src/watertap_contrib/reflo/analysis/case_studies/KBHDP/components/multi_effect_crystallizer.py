@@ -1,3 +1,5 @@
+import numpy as np
+import pandas as pd
 from pyomo.environ import (
     ConcreteModel,
     TransformationFactory,
@@ -365,6 +367,134 @@ def display_mec_dof(m, blk, where=None):
     print(f"Degrees of Freedom model: {degrees_of_freedom(m)}")
     print(f"Degrees of Freedom MEC blk: {degrees_of_freedom(blk)}")
     print(f"Degrees of Freedom MEC unit: {degrees_of_freedom(blk.unit)}")
+
+
+def get_model_performance(m):
+
+
+    effs = [m.fs.MEC.unit.effects[1].effect, m.fs.MEC.unit.effects[2].effect,m.fs.MEC.unit.effects[3].effect,m.fs.MEC.unit.effects[4].effect]
+    effect_names = ["Effect 1", "Effect 2", "Effect 3", "Effect 4"]
+    feed_salinities = [
+        i.properties_in[0].conc_mass_phase_comp["Liq", "NaCl"].value for i in effs
+    ]
+    feed_flow_rates = [
+        sum(
+            i.properties_in[0].flow_mass_phase_comp["Liq", j].value
+            for j in ["H2O", "NaCl"]
+        )
+        for i in effs
+    ]
+    feed_vol_flow_rates = [
+        i.properties_in[0].flow_vol_phase["Liq"].value * 1000 for i in effs
+    ]
+    temp_operating = [i.temperature_operating.value - 273.15 for i in effs]
+    temp_vapor_cond = [
+        i.properties_pure_water[0].temperature.value - 273.15 for i in effs
+    ]
+    p_operating = [i.pressure_operating.value / 1e5 for i in effs]
+    water_prod = [
+        i.properties_vapor[0].flow_mass_phase_comp["Vap", "H2O"].value for i in effs
+    ]
+    solid_prod = [
+        i.properties_solids[0].flow_mass_phase_comp["Sol", "NaCl"].value for i in effs
+    ]
+    liquid_prod = [
+        sum(
+            i.properties_out[0].flow_mass_phase_comp["Liq", j].value
+            for j in ["H2O", "NaCl"]
+        )
+        for i in effs
+    ]
+    liquid_flow_rate = [
+        i.properties_out[0].flow_vol_phase["Liq"].value * 1000 for i in effs
+    ]
+
+    liquid_salinity = [
+        i.properties_out[0].conc_mass_phase_comp["Liq", "NaCl"].value for i in effs
+    ]
+    power_required = [i.work_mechanical[0].value for i in effs]
+    power_provided = [i.energy_flow_superheated_vapor.value for i in effs]
+    vapor_enth = [
+        i.properties_vapor[0].dh_vap_mass_solvent.value
+        * i.properties_vapor[0].flow_mass_phase_comp["Vap", "H2O"].value
+        for i in effs
+    ]
+    STEC = [
+        i.work_mechanical[0].value
+        / i.properties_in[0].flow_vol_phase["Liq"].value
+        / 3600
+        for i in effs
+    ]
+
+    overall_STEC = (
+        m.fs.MEC.unit.effects[1].effect.work_mechanical[0].value
+        / sum(i.properties_in[0].flow_vol_phase["Liq"].value for i in effs)
+        / 3600
+    )
+
+    area = [i.heat_exchanger_area.value for i in effs]
+
+    model_output = np.array(
+        [
+            feed_flow_rates,
+            feed_vol_flow_rates,
+            feed_salinities,
+            temp_operating,
+            temp_vapor_cond,
+            p_operating,
+            water_prod,
+            solid_prod,
+            liquid_prod,
+            liquid_flow_rate,
+            liquid_salinity,
+            power_required,
+            power_provided,
+            vapor_enth,
+            STEC,
+            area,
+        ]
+    )
+
+    data_table = pd.DataFrame(
+        data=model_output,
+        columns=effect_names,
+        index=[
+            "Feed mass flow rate (kg/s)",
+            "Feed volumetric flow rate (L/s)",
+            "Feed salinities (g/L)",
+            "Operating temperature (C)",
+            "Vapor condensation temperature (C)",
+            "Operating pressure (bar)",
+            "Water production (kg/s)",
+            "Solid production (kg/s)",
+            "Liquid waste (kg/s)",
+            "Liquid waste volumetric flow rate (L/s)",
+            "Liquid waste salinity (g/L)",
+            "Thermal energy requirement (kW)",
+            "Thermal energy available from vapor (kW)",
+            "Vapor enthalpy (kJ)",
+            "STEC (kWh/m3 feed)",
+            "Heat transfer area (m2)",
+        ],
+    )
+
+    overall_performance = {
+        "Capacity (m3/day)": sum(feed_vol_flow_rates) * 86400 / 1000,
+        "Feed brine salinity (g/L)": m.fs.MEC.unit.effects[1].effect.properties_in[0]
+        .conc_mass_phase_comp["Liq", "NaCl"]
+        .value,
+        "Total brine disposed (kg/s)": sum(feed_flow_rates),
+        "Total water production (kg/s)": sum(water_prod),
+        "Total solids collected (kg/s)": sum(solid_prod),
+        "Total waste water remained (kg/s)": sum(liquid_prod),
+        "Initial thermal energy consumption (kW)": m.fs.MEC.unit.effects[1].effect.work_mechanical[
+            0
+        ].value,
+        "Overall STEC (kWh/m3 feed)": overall_STEC,
+        "Total heat transfer area (m2)": sum(i.heat_exchanger_area.value for i in effs),
+    }
+
+    return data_table, overall_performance
 
 
 def display_mec_streams(m, blk):
