@@ -486,7 +486,7 @@ class REFLOSystemCostingData(WaterTAPCostingBlockData):
 
         self.aggregate_flow_heat_purchased = pyo.Var(
             initialize=100,
-            domain=pyo.Reals,
+            domain=pyo.NonNegativeReals,
             doc="Aggregated heat consumed",
             units=pyo.units.kW,
         )
@@ -605,7 +605,6 @@ class REFLOSystemCostingData(WaterTAPCostingBlockData):
                 )
             )
 
-
             self.frac_heat_from_grid_constraint = pyo.Constraint(
                 expr=(
                     self.frac_heat_from_grid
@@ -617,7 +616,6 @@ class REFLOSystemCostingData(WaterTAPCostingBlockData):
                     )
                 )
             )
-
 
         elif hasattr(treat_cost, "aggregate_flow_heat"):
 
@@ -836,7 +834,7 @@ class REFLOSystemCostingData(WaterTAPCostingBlockData):
                 pyo.units.convert(flow_rate, to_units=pyo.units.m**3 / self.base_period)
                 * self.utilization_factor
             ),
-            doc=f"Constraint for Levelized Cost of Treatment based on flow {flow_rate.name}",
+            doc=f"Constraint for Levelized Cost of Water based on flow {flow_rate.name}",
         )
         self.add_component("LCOW_constraint", LCOW_constraint)
 
@@ -860,10 +858,10 @@ class REFLOSystemCostingData(WaterTAPCostingBlockData):
 
         if not hasattr(treat_cost, "LCOW"):
             treat_cost.add_LCOW(flow_rate, name="LCOW")
-
+        
         self.LCOT = pyo.Expression(expr = treat_cost.LCOW)
 
-        add_object_reference(self, "LCOT", getattr(treat_cost, "LCOW"))
+        add_object_reference(self, name, getattr(treat_cost, 'LCOW'))
 
     def add_LCOH(self):
         """
