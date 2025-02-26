@@ -54,8 +54,9 @@ def case_study_stacked_plot(
     df,
     fig=None,
     ax=None,
-    global_costing_blk="fs.treatment.costing",
-    costing_blk="fs.costing",
+    treatment_costing_blk=None,
+    global_costing_blk = None,
+    costing_blk=None,
     xcol=None,
     flow_col=None,  # column to be used as denominator in LCOW calculations, assumed to be in m3/s
     unit_dict=dict(),  # (unit name: unit location)
@@ -85,8 +86,14 @@ def case_study_stacked_plot(
     if flow_hatch is None:
         flow_hatch = capex_hatch
     
+    has_energy_costing_blk = True
+
+    if costing_blk is None:
+        costing_blk = treatment_costing_blk
+        has_energy_costing_blk = False
+
     if global_costing_blk is None:
-        global_costing_blk = costing_blk
+        global_costing_blk = treatment_costing_blk
 
     global_params = [
         "maintenance_labor_chemical_factor",
@@ -142,14 +149,15 @@ def case_study_stacked_plot(
             unit_capex = 0
 
             try:
-                print(f"{b}.capital_cost")
+                # print(f"{b}.capital_cost")
+                print(u,' capex = ', row.loc[f"{b}.capital_cost"])
                 unit_capex += (
                     row.loc[f"{b}.capital_cost"]
                     * costing_params["total_investment_factor"]
                 )  # USD2023
 
             except KeyError:
-                print(f"No CAPEX for {u} found at {b}.capital_cost.")
+                print(f"No CAPEX for {u} found.")
                 pass
 
             total_capex += unit_capex  # $
@@ -162,7 +170,7 @@ def case_study_stacked_plot(
             ) / denominator  # $ / m3
             total_lcow += unit_capex_lcow  # $ / m3
 
-            if unit_capex_lcow != 0:
+            if abs(unit_capex_lcow) > 1e-6:
                 capex_lcow[u].append(unit_capex_lcow)
 
             ### OPEX
@@ -173,20 +181,22 @@ def case_study_stacked_plot(
 
             try:
                 unit_opex_total += row.loc[f"{b}.fixed_operating_cost"]
+                print(u,' fixed opex = ',row.loc[f"{b}.fixed_operating_cost"])
             except KeyError:
-                print(f"No Fixed OPEX for {u} found at: {b}.fixed_operating_cost")
+                print(f"No Fixed OPEX for {u} found")
                 pass
 
             try:
                 unit_opex_total += row.loc[f"{b}.variable_operating_cost"]
+                print(u,' var opex = ',row.loc[f"{b}.variable_operating_cost"])
             except KeyError:
-                print(f"No Variable OPEX for {u} found at: {b}.variable_operating_cost")
+                print(f"No Variable OPEX for {u} found")
                 pass
 
             total_opex += unit_opex_total  # $ / year
             unit_opex_lcow = unit_opex_total / denominator  # $ / m3
 
-            if unit_opex_lcow != 0:
+            if abs(unit_opex_lcow) > 1e-6:
                 opex_lcow[u].append(unit_opex_lcow)
 
             total_lcow += unit_opex_lcow  # $ / m3
@@ -196,16 +206,21 @@ def case_study_stacked_plot(
             flow_lcow = 0
             try:
                 # First try to find it via aggregate_flow_costs
+                if flow_name in ['electric', 'heat'] and has_energy_costing_blk:
+                    raise KeyError('should check purchased energy')
                 total_flow_cost += row.loc[
-                    f"{costing_blk}.aggregate_flow_costs[{flow_name}]"
+                    f"{treatment_costing_blk}.aggregate_flow_costs[{flow_name}]"
                 ]  # $ / year
                 total_annualized_cost += row.loc[
-                    f"{costing_blk}.aggregate_flow_costs[{flow_name}]"
+                    f"{treatment_costing_blk}.aggregate_flow_costs[{flow_name}]"
                 ]
                 flow_lcow += (
-                    row.loc[f"{costing_blk}.aggregate_flow_costs[{flow_name}]"] / denominator
+                    row.loc[f"{treatment_costing_blk}.aggregate_flow_costs[{flow_name}]"] / denominator
                 )  # $ / m3
                 agg_flow_lcow[flow_name].append(flow_lcow)
+                print(flow_label, " cost =", row.loc[
+                    f'{treatment_costing_blk}.aggregate_flow_costs[{flow_name}]'
+                ])
             except KeyError:
                 # print(f"No aggregate cost for {flow_name} found.")
                 # pass
@@ -221,17 +236,26 @@ def case_study_stacked_plot(
                         row.loc[f"{costing_blk}.total_{flow_name}_operating_cost"] / denominator
                     )  # $ / m3
                     agg_flow_lcow[flow_name].append(flow_lcow)
+                    print(flow_label, " cost =", row.loc[
+                        f"{costing_blk}.total_{flow_name}_operating_cost"
+                    ])
                 except KeyError:
                     # print(f"No aggregate cost for {flow_name} found.")
                     # pass
                     raise ValueError(f"No cost for {flow_name} found.")
-
             total_lcow += flow_lcow
+            
 
         if check_calc:
             print(f"\nFor {xcol} = {x}:")
             print(f"\tActual LCOW: {row_lcow:.6f}")
             print(f"\tCalculated LCOW: {total_lcow:.6f}")
+            print(f"\t\t total CAPEX: {total_capex:.6f}")
+            print(f"\t\t total OPEX: {total_opex:.6f}")
+            print(f"\t\t total flow: {total_flow_cost:.6f}")
+            print(unit_opex_lcow)
+            
+
 
         capex.append(total_capex)
         opex.append(total_opex)

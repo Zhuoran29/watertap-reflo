@@ -31,13 +31,13 @@ from watertap.property_models.unit_specific.cryst_prop_pack import (
     NaClStateBlock,
 )
 from watertap.property_models.water_prop_pack import (
-    WaterParameterBlock,
+    WaterParameterBlock as SteamParameterBlock,
     WaterStateBlock,
 )
 from watertap_contrib.reflo.unit_models.multi_effect_crystallizer import (
     MultiEffectCrystallizer,
 )
-from watertap_contrib.reflo.unit_models.crystallizer_effect import CrystallizerEffect
+# from watertap_contrib.reflo.unit_models.crystallizer_effect import CrystallizerEffect
 
 from watertap_contrib.reflo.costing import (
     TreatmentCosting,
@@ -59,30 +59,39 @@ def build_system():
     m = ConcreteModel()
     m.fs = FlowsheetBlock(dynamic=False)
 
+    m.fs.properties_vapor = SteamParameterBlock()
+    m.fs.properties_NaCl = NaClParameterBlock()
+    
     m.fs.costing = TreatmentCosting()
-    build_mec(m, m.fs)
+
+    build_mec(m, m.fs,
+              prop_package = m.fs.properties_NaCl,
+              prop_package_vapor = m.fs.properties_vapor)
 
     return m
 
-def build_mec(m, blk) -> None:
+def build_mec(m, blk, prop_package, prop_package_vapor ) -> None:
 
-    blk.properties = NaClParameterBlock()
-    blk.vapor_properties = WaterParameterBlock()
+    if prop_package is None:
+        prop_package = NaClParameterBlock()
+    if prop_package_vapor is None:
+        prop_package_vapor = SteamParameterBlock()
 
     blk.unit = MultiEffectCrystallizer(
-        property_package=blk.properties, property_package_vapor=blk.vapor_properties
+        property_package= prop_package, property_package_vapor = prop_package_vapor
     )
 
 def set_mec_op_conditions(m, 
                           blk,
                           operating_pressures = [0.4455, 0.2758, 0.1651, 0.095],
-                          nacl_yield = 0.8,
+                          nacl_yield = 0.7,
+                          heat_transfer_coefficient = 0.13
                           ) -> None :
     
     mec = blk.unit
 
     # Guessed values for initialization
-    flow_in = 3.5
+    flow_in = 5
     rho = 1000 * pyunits.kg / pyunits.m**3
     conc_in = 160 * pyunits.g / pyunits.L
     feed_pressure = 101325
@@ -104,8 +113,11 @@ def set_mec_op_conditions(m,
     """
     # flow_mass_phase_water_per = 116.2473764168908 / 100 * pyunits.kg / pyunits.s
     # flow_mass_phase_salt_per = 28.478213652777765 / 100 * pyunits.kg / pyunits.s
-    flow_mass_phase_water_per = 116 / 100 * pyunits.kg / pyunits.s
-    flow_mass_phase_salt_per = 28 / 100 * pyunits.kg / pyunits.s
+    # flow_mass_phase_water_per = 116 / 100 * pyunits.kg / pyunits.s
+    # flow_mass_phase_salt_per = 28 / 100 * pyunits.kg / pyunits.s
+
+    flow_mass_phase_water_per = flow_mass_phase_water_total /(flow_mass_phase_water_total + flow_mass_phase_salt_total) * pyunits.kg / pyunits.s
+    flow_mass_phase_salt_per = flow_mass_phase_salt_total  /(flow_mass_phase_water_total + flow_mass_phase_salt_total) * pyunits.kg / pyunits.s
 
     saturated_steam_pressure = 101325 * pyunits.Pa + pyunits.convert(
         3 * pyunits.bar, to_units=pyunits.Pa
@@ -136,11 +148,11 @@ def set_mec_op_conditions(m,
         eff.effect.pressure_operating.fix(
             pyunits.convert(op_pressure * pyunits.bar, to_units=pyunits.Pa)
         )
-        eff.effect.overall_heat_transfer_coefficient.fix(0.1)
+        eff.effect.overall_heat_transfer_coefficient.fix(heat_transfer_coefficient)
 
     first_effect = mec.effects[1].effect
 
-    first_effect.overall_heat_transfer_coefficient.fix(0.1)
+    first_effect.overall_heat_transfer_coefficient.fix(heat_transfer_coefficient)
     first_effect.heating_steam[0].pressure_sat
     first_effect.heating_steam[0].dh_vap_mass
     first_effect.heating_steam.calculate_state(
@@ -164,7 +176,7 @@ def set_mec_op_conditions(m,
     for n, eff in mec.effects.items():
         assert degrees_of_freedom(eff.effect) == 0
 
-def init_mec(blk):
+def init_mec(m,blk):
     mec = blk.unit
 
     ### INITIALIZE FOR EACH EFFECT
@@ -185,22 +197,22 @@ def init_mec(blk):
             assert degrees_of_freedom(eff.effect) == 1
 
     ### FULLY SOLVE THE MODEL
-    blk.properties.set_default_scaling(
+    m.fs.properties_NaCl.set_default_scaling(
         "flow_mass_phase_comp", 1e-1, index=("Liq", "H2O")
     )
-    blk.properties.set_default_scaling(
+    m.fs.properties_NaCl.set_default_scaling(
         "flow_mass_phase_comp", 1e-1, index=("Liq", "NaCl")
     )
-    blk.properties.set_default_scaling(
+    m.fs.properties_NaCl.set_default_scaling(
         "flow_mass_phase_comp", 1e-1, index=("Vap", "H2O")
     )
-    blk.properties.set_default_scaling(
+    m.fs.properties_NaCl.set_default_scaling(
         "flow_mass_phase_comp", 1e-1, index=("Sol", "NaCl")
     )
-    blk.vapor_properties.set_default_scaling(
+    m.fs.properties_vapor.set_default_scaling(
         "flow_mass_phase_comp", 1e-1, index=("Vap", "H2O")
     )
-    blk.vapor_properties.set_default_scaling(
+    m.fs.properties_vapor.set_default_scaling(
         "flow_mass_phase_comp", 1, index=("Liq", "H2O")
     )
 
@@ -228,26 +240,26 @@ def mec_rescaling(blk,
     """
     Note: Rescaling is probably needed for extremely large feed flow,
     """
-    blk.properties.set_default_scaling(
+    blk.properties_NaCl.set_default_scaling(
         "flow_mass_phase_comp",
         1 / value(flow_mass_phase_water_total),
         index=("Liq", "H2O"),
     )
-    blk.properties.set_default_scaling(
+    blk.properties_NaCl.set_default_scaling(
         "flow_mass_phase_comp",
         1 / value(flow_mass_phase_salt_total),
         index=("Liq", "NaCl"),
     )
-    blk.properties.set_default_scaling(
+    blk.properties_NaCl.set_default_scaling(
         "flow_mass_phase_comp", 10, index=("Vap", "H2O")
     )
-    blk.properties.set_default_scaling(
+    blk.properties_NaCl.set_default_scaling(
         "flow_mass_phase_comp", 1e-2, index=("Sol", "NaCl")
     )
-    blk.vapor_properties.set_default_scaling(
+    blk.properties_vapor.set_default_scaling(
         "flow_mass_phase_comp", 1e-2, index=("Vap", "H2O")
     )
-    blk.vapor_properties.set_default_scaling(
+    blk.properties_vapor.set_default_scaling(
         "flow_mass_phase_comp", 1, index=("Liq", "H2O")
     )
 
@@ -282,11 +294,12 @@ def solve(m, solver=None, tee=True, raise_on_failure=True):
 
 if __name__ == "__main__":
 
+
     m = ConcreteModel()
     m.fs = FlowsheetBlock(dynamic=False)
 
     m.fs.costing = TreatmentCosting()
-    build_mec(m, m.fs)
+    build_mec(m, m.fs, prop_package=None, prop_package_vapor=None)
 
     set_mec_op_conditions(m, m.fs)
     init_mec(m.fs)

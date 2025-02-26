@@ -61,7 +61,7 @@ from watertap_contrib.reflo.analysis.case_studies.permian.components.translator_
 from watertap_contrib.reflo.analysis.case_studies.permian.components.translator_sw_to_nacl import *
 from watertap_contrib.reflo.analysis.case_studies.permian.components.normalizer_cryst import *
 from watertap_contrib.reflo.analysis.case_studies.permian.components.denormalizer_cryst import *
-from watertap_contrib.reflo.analysis.case_studies.permian.components.multi_effect_crystallizer import *
+from watertap_contrib.reflo.analysis.case_studies.permian.components.multi_effect_crystallizer_new import *
 from watertap_contrib.reflo.analysis.case_studies.permian.components.CST import *
 
 reflo_dir = pathlib.Path(__file__).resolve().parents[3]

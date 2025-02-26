@@ -38,6 +38,7 @@ from watertap.core.zero_order_properties import WaterParameterBlock as ZO
 from watertap.core.util.model_diagnostics.infeasible import *
 from watertap.core.util.initialization import *
 from watertap.property_models.seawater_prop_pack import SeawaterParameterBlock
+from watertap.property_models.unit_specific.cryst_prop_pack import NaClParameterBlock
 from watertap_contrib.reflo.costing import (
     TreatmentCosting,
     EnergyCosting,
@@ -81,9 +82,10 @@ def build_permian_FO(permian_fo_config):
     m.fs.properties = ZO(solute_list=["tds"])
     m.fs.properties_feed = SeawaterParameterBlock()
     m.fs.properties_draw = FODrawSolutionParameterBlock()
+    m.fs.properties_NaCl = NaClParameterBlock()
 
     treat.feed = Feed(property_package=m.fs.properties)
-    treat.product = Product(property_package=m.fs.properties_feed)
+    treat.product = Product(property_package=m.fs.properties_NaCl)
 
     # Add translator blocks
     treat.zo_to_sw_feed = Translator_ZO_to_SW(
@@ -98,9 +100,9 @@ def build_permian_FO(permian_fo_config):
         inlet_property_package=m.fs.properties,
         outlet_property_package=m.fs.properties_feed,
     )
-    treat.draw_to_sw = Translator_Draw_to_SW(
+    treat.draw_to_nacl = Translator_Draw_to_NaCl(
         inlet_property_package = m.fs.properties_draw,
-        outlet_property_package= m.fs.properties_feed,
+        outlet_property_package= m.fs.properties_NaCl,
     )
 
     # Add components
@@ -126,6 +128,9 @@ def build_permian_FO(permian_fo_config):
     treat.DWI = FlowsheetBlock(dynamic=False)
     build_dwi(m, treat.DWI, prop_package=m.fs.properties_feed)
 
+    treat.mec = FlowsheetBlock(dynamic=False)
+    build_mec(m, treat.mec)
+
     treat.disposal_SW_mixer = Mixer(
         property_package=m.fs.properties_feed,
         num_inlets=3,
@@ -136,7 +141,8 @@ def build_permian_FO(permian_fo_config):
 
     # BUILD PRODUCT STREAM
     # feed (1)> chem_addition (2)> EC (3)> cart_filt 
-    #      (4)> ZO_to_SW_translator (5)> FO (6)> Draw_to_SW_translator (7)> product
+    #      (4)> ZO_to_SW_translator (5)> FO (6)> Draw_to_NaCl_translator (7)> product_mixer (10)> product
+    #                          crystallizer (8)>            Denormalizer (9)> product_mixer
     
     treat.feed_to_chem_addition = Arc(
         source=treat.feed.outlet, destination=treat.chem_addition.feed.inlet
@@ -154,16 +160,16 @@ def build_permian_FO(permian_fo_config):
         source=treat.zo_to_sw_feed.outlet, destination=treat.FO.fs.fo.feed
     ) # (5)
     treat.fo_to_translator = Arc(
-        source=treat.FO.fs.S2.fresh_water, destination=treat.draw_to_sw.inlet
+        source=treat.FO.fs.S2.fresh_water, destination=treat.draw_to_nacl.inlet
     ) # (6)
     treat.fo_translator_to_product = Arc(
-        source=treat.draw_to_sw.outlet, destination=treat.product.inlet
+        source=treat.draw_to_nacl.outlet, destination=treat.product.inlet
     ) # (7)
 
     # BUILD DISPOSAL STREAM
-    #        EC (1)> ZO_to_SW_translator (3)> disposal_mixer (6)> DWI
-    # cart_filt (2)> ZO_to_SW_translator (4)> disposal_mixer
-    #                                FO  (5)> disposal_mixer
+    #        EC (1)> ZO_to_NaCl_translator  (4)> disposal_mixer (7)> Normalizer (8)> cryst
+    # cart_filt (2)> ZO_to_NaCl_translator  (5)> disposal_mixer
+    #        FO (3)> SW_to_NaCl_translator  (6)> disposal_mixer
 
     treat.ec_disposal_to_translator = Arc(
         source=treat.ec.disposal.outlet, destination=treat.zo_to_sw_ec_disposal.inlet
@@ -208,6 +214,7 @@ def set_operating_conditions(m, operating_condition, **kwargs):
     set_chem_addition_op_conditions(m, m.fs.treatment.chem_addition, **kwargs)
     set_ec_operating_conditions(m, m.fs.treatment.ec, **kwargs)
     set_cart_filt_op_conditions(m, m.fs.treatment.cart_filt)
+    set_mec_op_conditions(m, m.fs.treatment.mec)
 
     # Set energy system condition
     set_cst_op_conditions(m.fs.energy.cst, heat_load=87.7751, hours_storage=24)
@@ -303,7 +310,9 @@ def init_system(m, permian_fo_config, CST_config):
     treat.FO.fs.fo.feed_props[0].flow_mass_phase_comp["Liq", "TDS"].unfix()
 
     propagate_state(arc = treat.fo_to_translator)
-    treat.draw_to_sw.initialize()
+    treat.draw_to_nacl.outlet.flow_mass_phase_comp[0, "Vap", "H2O"].fix(0)
+    treat.draw_to_nacl.outlet.flow_mass_phase_comp[0, "Sol", "NaCl"].fix(0)
+    treat.draw_to_nacl.initialize()
 
     propagate_state(arc = treat.fo_translator_to_product)
     treat.product.initialize()
@@ -325,6 +334,23 @@ def init_system(m, permian_fo_config, CST_config):
     treat.DWI.unit.properties[0].temperature.fix()
     treat.DWI.unit.properties[0].pressure.fix()
     init_dwi(m, treat.DWI)
+
+    init_mec(treat.mec)
+    unfix_mec(treat.mec)
+
+    flow_mass_phase_water_total = 11.6
+    flow_mass_phase_salt_total = 2.8
+
+    treat.mec.unit.inlet.flow_mass_phase_comp[0, "Liq", "H2O"].fix(
+        flow_mass_phase_water_total
+    )
+    treat.mec.unit.inlet.flow_mass_phase_comp[0, "Liq", "NaCl"].fix(
+        flow_mass_phase_salt_total
+    )
+
+    treat.mec.unit.inlet.temperature[0].fix(273.15 + 30.51)
+    treat.mec.unit.inlet.pressure[0].fix(101325)
+    mec_rescaling(treat.mec)
 
     init_cst(m.fs.energy.cst, 
             #  storage=CST_config['storage'], 
@@ -348,6 +374,8 @@ def add_treatment_costing(m):
     m.fs.treatment.FO.fs.fo.costing = UnitModelCostingBlock(flowsheet_costing_block=m.fs.treatment.costing)
     
     add_dwi_costing(m, m.fs.treatment.DWI, flowsheet_costing_block=m.fs.treatment.costing)
+
+    add_mec_costing(m, m.fs.treatment.mec, flowsheet_costing_block=m.fs.treatment.costing)
 
     m.fs.treatment.costing.cost_process()
 
@@ -426,150 +454,7 @@ def run_permian_FO(operating_condition,
 
     return m
 
-
-#%%
 if __name__ == "__main__":
-    fail=[]
-    heat=[]
-    brine=[]
-    grid_frac =[]
-    LCOW = []
-    permian_fo_config = {
-    "feed_vol_flow": 0.22, # initial value for fo model setup
-    "feed_TDS_mass": 0.039, # mass fraction, 0.119 is about 130 g/L, 0.092 for 100 g/L, 0.19 for 200 g/L
-    "recovery_ratio": 0.5,
-    "RO_recovery_ratio":1,  # RO recovery ratio
-    "NF_recovery_ratio":0.8,  # Nanofiltration recovery ratio
-    "feed_temperature":25,
-    "strong_draw_temp":25,  # Strong draw solution inlet temperature (C)
-    "strong_draw_mass_frac":0.9,  # Strong draw solution mass fraction
-    "product_draw_mass_frac": 0.01,   # FO product draw solution mass fraction
-    "HX1_cold_out_temp": 78 + 273.15, # HX1 coldside outlet temperature
-    "HX1_hot_out_temp": 32 + 273.15,  # HX1 hotside outlet temperature
-    }
-
-    CST_config = {
-        "storage":12, # hr
-        "heat_load":25, # MW
-        "heat_flow": -5000, # kW
-    }
-
-    operating_condition = {
-    "feed_vol_flow": 5, # MGD
-    "feed_tds": 130 # g/L
-    }
-    m = run_permian_FO(operating_condition,
-                            permian_fo_config,
-                            CST_config,)
-    results_dict = build_results_dict(m, skips=["diffus_phase_comp"])
-    recovery_ratios = [0.399, 0.42, 0.44, 0.45, 0.47,0.48,0.485, 0.49, 0.5, 0.51,0.52,0.53,0.54,0.545,0.55,0.555,0.56]
-    results_dict['fo_recovery_ratio'] = []
-
-    for rr in recovery_ratios:
-        permian_fo_config = {
-        "feed_vol_flow": 0.22, # initial value for fo model setup
-        "feed_TDS_mass": 0.039, # mass fraction, 0.119 is about 130 g/L, 0.092 for 100 g/L, 0.19 for 200 g/L
-        "recovery_ratio": rr,
-        "RO_recovery_ratio":1,  # RO recovery ratio
-        "NF_recovery_ratio":0.8,  # Nanofiltration recovery ratio
-        "feed_temperature":25,
-        "strong_draw_temp":25,  # Strong draw solution inlet temperature (C)
-        "strong_draw_mass_frac":0.9,  # Strong draw solution mass fraction
-        "product_draw_mass_frac": 0.01,   # FO product draw solution mass fraction
-        "HX1_cold_out_temp": 78 + 273.15, # HX1 coldside outlet temperature
-        "HX1_hot_out_temp": 32 + 273.15,  # HX1 hotside outlet temperature
-        }
-
-        CST_config = {
-            "storage":12, # hr
-            "heat_load":25, # MW
-            "heat_flow": -5000, # kW
-        }
-
-        operating_condition = {
-        "feed_vol_flow": 5, # MGD
-        "feed_tds": 130 # g/L
-        }
-        try:
-            m = run_permian_FO(operating_condition,
-                            permian_fo_config,
-                            CST_config,
-                            )
-            results = solver.solve(m)
-            assert_optimal_termination(results)
-            results_dict = results_dict_append(m, results_dict)
-            results_dict['fo_recovery_ratio'].append(rr*100)
-            heat.append((rr,value(m.fs.treatment.FO.fs.fo.costing.thermal_energy_flow)))
-            brine.append((rr, value(m.fs.treatment.FO.fs.fo.brine_props[0].conc_mass_phase_comp["Liq","TDS"])))
-            LCOW.append((rr, 100*value(m.fs.treatment.costing.LCOW)))
-            # grid_frac.append((rr,m.fs.costing.frac_heat_from_grid.value))
-        # print(brine)
-        except:
-            brine.append((rr,'fail'))
-            heat.append((rr,'fail'))
-            LCOW.append((rr,'fail'))
-            # grid_frac.append((rr,'fail'))
-    
-    df = pd.DataFrame.from_dict(results_dict)
-    df.to_csv('FO_DWI_RPT.csv')
-#%% plotting
-    import pandas as pd
-    from watertap_contrib.reflo.analysis.case_studies.permian import *
-
-    results_file = f"FO_DWI_Base.csv"
-    df = pd.read_csv(results_file)
-
-    xcol = "fo_recovery_ratio"
-
-    flow_col = "fs.treatment.product.properties[0.0].flow_vol_phase[Liq]"
-
-    unit_dict = {
-        "H2O2 Addition": "fs.treatment.chem_addition.unit.costing",
-        "EC": "fs.treatment.ec.unit.costing",
-        "CF": "fs.treatment.cart_filt.unit.costing",
-        "FO": "fs.treatment.FO.fs.fo.costing",
-        "DWI": "fs.treatment.DWI.unit.costing",
-        "CST": "fs.energy.cst.unit.costing",
-    }
-
-    agg_flows = {
-        "Aluminum": "aluminum",
-        "Electricity": "electric",
-        "Heat": "heat",
-        "H2O2": "hydrogen_peroxide",
-    }
-
-    ax_dict = dict(xlabel="FO Recovery Ratio (%)", ylabel="LCOW (\$/m$^3$)")
-
-    fig, ax = case_study_stacked_plot(
-        df,
-        treatment_costing_blk="fs.treatment.costing",
-        costing_blk="fs.costing",
-        unit_dict=unit_dict,
-        agg_flows=agg_flows,
-        xcol=xcol,
-        flow_col=flow_col,
-        ax_dict=ax_dict,
-        opex_hatch="\\\\\\",
-        flow_hatch="..",
-        leg_kwargs=dict(
-            loc="upper left",
-            frameon=False,
-            ncol=3,
-            handlelength=1,
-            handleheight=1,
-            labelspacing=0.2,
-            columnspacing=0.9,
-        ),
-    )
-
-#%%
-	# Actual LCOW: 26.100505
-	# Calculated LCOW: 29.102167
-	# 	 total CAPEX: 363601827.346963
-	# 	 total OPEX: 36489787.083475
-	# 	 total flow: 21005056.818094
-
     permian_fo_config = {
     "feed_vol_flow": 0.22, # initial value for fo model setup
     "feed_TDS_mass": 0.039, # mass fraction, 0.119 is about 130 g/L, 0.092 for 100 g/L, 0.19 for 200 g/L
@@ -629,187 +514,3 @@ if __name__ == "__main__":
     # # heat_purchased = value(m.fs.costing.total_heat_operating_cost)
 
     
-
-#%% Parametric
-    chem_capexs = []
-    ec_capexs = []
-    filt_capexs = []
-    fo_capexs = []
-    dwi_capexs = []
-    solar_capexs = []
-
-    chem_opexs =[]
-    ec_opexs = []
-    filt_opexs = []
-    fo_opexs = []
-    dwi_opexs = []
-    solar_opexs = []
-
-    elecs = []
-    heats = []
-    alums = []
-    h2o2s = []
-
-    LCOWs =[]
-    LCOHs = []
-    LCOTs = []
-    failed= []
-
-    rr = [ 0.2,0.24,0.28,0.32,0.35,0.4,0.44]
-    solar_size = [-1000, -2000, -3000, -4000, -7000,-8000,-9000]
-
-    strong_draw_mass = [i*0.03 + 0.80 for i in range(6)]
-
-    for v in solar_size:
-        permian_fo_config = {
-    "feed_vol_flow": 0.22, # initial value for fo model setup
-    "feed_TDS_mass": 0.035, # mass fraction, 0.119 is about 130 g/L
-    "recovery_ratio": 0.44,
-    "RO_recovery_ratio":1,  # RO recovery ratio
-    "NF_recovery_ratio":0.8,  # Nanofiltration recovery ratio
-    "feed_temperature":25,
-    "strong_draw_temp":25,  # Strong draw solution inlet temperature (C)
-    "strong_draw_mass_frac": 0.9,  # Strong draw solution mass fraction
-    "product_draw_mass_frac": 0.01,   # FO product draw solution mass fraction
-    "HX1_cold_out_temp": 78 + 273.15, # HX1 coldside outlet temperature
-    "HX1_hot_out_temp": 32 + 273.15,  # HX1 hotside outlet temperature
-    }
-        operating_condition = {
-    "feed_vol_flow": 5, # MGD
-    "feed_tds": 130 # g/L
-    }
-        CST_config = {
-        "storage":12, # hr
-        "heat_load":25, # MW
-        "heat_flow": v, # kW
-    }
-        try:
-            m = run_permian_FO(operating_condition,
-                        permian_fo_config,
-                        CST_config,
-                        )
-        except:
-            failed.append(v)
-            continue
-
-        lcow = value(m.fs.costing.LCOW)
-        lcoh = value(m.fs.costing.LCOH)
-        lcot = value(m.fs.costing.LCOT)
-        capex_total = value(m.fs.treatment.costing.total_capital_cost)
-        chem_capex = m.fs.treatment.chem_addition.unit.costing.capital_cost()
-        filt_capex = m.fs.treatment.cart_filt.unit.costing.capital_cost()
-        ec_capex = m.fs.treatment.ec.unit.costing.capital_cost()
-        fo_capex = m.fs.treatment.FO.fs.fo.costing.capital_cost()
-        dwi_capex = m.fs.treatment.DWI.costing.capital_cost()
-        solar_capex = m.fs.energy.costing.total_capital_cost()
-
-        opex_total = value(m.fs.treatment.costing.total_operating_cost)
-        fix_opex = value(m.fs.treatment.costing.maintenance_labor_chemical_operating_cost)
-        chem_opex = chem_capex * 0.03
-        filt_opex = filt_capex * 0.03
-        ec_opex = ec_capex * 0.03
-        fo_opex = fo_capex * 0.03
-        dwi_opex = dwi_capex * 0.03
-        solar_opex = value(m.fs.energy.costing.total_operating_cost)
-
-        # fo_elec_cost = 0.07 * value(m.fs.treatment.FO.fs.fo.costing.electricity_flow) * 10290.711324821756
-        fo_heat_cost = 0.02 * value(m.fs.treatment.FO.fs.fo.costing.thermal_energy_flow) * 8766
-        chem_elec_cost = 0.07 * 8766 * value(m.fs.treatment.costing._registered_flows["electricity"][0])
-        ec_elec_cost = 0.07 * 8766 * value(m.fs.treatment.costing._registered_flows["electricity"][1])
-        filt_elec_cost = 0.07 * 8766 * value(m.fs.treatment.costing._registered_flows["electricity"][2])
-        fo_elec_cost = 0.07 * 8766 * value(m.fs.treatment.costing._registered_flows["electricity"][3])
-        dwi_elec_cost = 0.07 * 8766 * value(m.fs.treatment.costing._registered_flows["electricity"][4])
-
-
-        var_opex_total = value(m.fs.treatment.costing.total_variable_operating_cost)
-        elec_cost = value(m.fs.treatment.costing.aggregate_flow_costs["electricity"])
-        heat_cost = value(m.fs.treatment.costing.aggregate_flow_costs["heat"])
-        alum_cost = value(m.fs.treatment.costing.aggregate_flow_costs["aluminum"])
-        h2o2_cost = value(m.fs.treatment.costing.aggregate_flow_costs["hydrogen_peroxide"])
-        heat_purchased = value(m.fs.costing.total_heat_operating_cost)
-
-        capital_recovery_rate = value(m.fs.treatment.costing.capital_recovery_factor)
-        flow_vol = value(pyunits.convert(m.fs.treatment.product.properties[0].flow_vol_phase["Liq"],
-                                         to_units=pyunits.m**3/pyunits.year))
-
-        LCOWs.append(lcow)
-        LCOHs.append(lcoh)
-        LCOTs.append(lcot)
-        chem_capexs.append(chem_capex*capital_recovery_rate/flow_vol)
-        ec_capexs.append(ec_capex*capital_recovery_rate/flow_vol)
-        filt_capexs.append(filt_capex*capital_recovery_rate/flow_vol)
-        fo_capexs.append(fo_capex*capital_recovery_rate/flow_vol)
-        dwi_capexs.append(dwi_capex*capital_recovery_rate/flow_vol)
-        solar_capexs.append(solar_capex*capital_recovery_rate/flow_vol)
-
-        chem_opexs.append((chem_opex ) /flow_vol)
-        ec_opexs.append(  (ec_opex   ) /flow_vol)
-        filt_opexs.append((filt_opex )/flow_vol)
-        fo_opexs.append(  (fo_opex  ) /flow_vol)
-        dwi_opexs.append( (dwi_opex ) /flow_vol)
-        solar_opexs.append( solar_opex / flow_vol)
-
-        # chem_opexs.append((chem_opex + h2o2_cost    +chem_elec_cost) /flow_vol)
-        # ec_opexs.append(  (ec_opex   + alum_cost    +ec_elec_cost) /flow_vol)
-        # filt_opexs.append((filt_opex + filt_elec_cost)/flow_vol)
-        # fo_opexs.append(  (fo_opex   + fo_elec_cost + fo_heat_cost) /flow_vol)
-        # dwi_opexs.append( (dwi_opex  + dwi_elec_cost) /flow_vol)
-
-        elecs.append(elec_cost/flow_vol)
-        # heats.append(heat_cost/flow_vol)
-        heats.append(heat_purchased/flow_vol)
-        alums.append(alum_cost/flow_vol)
-        h2o2s.append(h2o2_cost/flow_vol)
-    
-    print('failed',failed)
-
-#%% Plot
-import matplotlib.pyplot as plt
-# alums = [i*0.05 for i in alums]
-# ec_opexs = [i * 0.05 for i in ec_opexs]
-solar_size_MW = [i/(-1000) for i in solar_size]
-plt.stackplot(solar_size_MW,
-            chem_capexs, chem_opexs,
-            ec_capexs, ec_opexs,
-            filt_capexs, filt_opexs,
-            fo_capexs, fo_opexs,
-            dwi_capexs, dwi_opexs,
-            solar_capexs, solar_opexs,
-            elecs, heats, alums, h2o2s,
-            labels=['Chem add CAPEX', 'Chem add OPEX',
-                    'EC CAPEX', 'EC OPEX',
-                    'Cart filt CAPEX', 'Cart filt OPEX',
-                    'FO CAPEX', 'FO OPEX',
-                    'DWI CAPEX', 'DWI OPEX',
-                    'Solar CAPEX', 'Solar OPEX',
-                    'Elec', 'Heat purchased','Aluminum','H2O2',
-                    ],
-            hatch =['', '\\\\',
-                    '', '\\\\',
-                    '', '\\\\',
-                    '', '\\\\',
-                    '', '\\\\',
-                    '', '\\\\',
-                    '','','','',
-                    ],
-            colors=['gray','gray',
-                    'tomato', 'tomato',
-                    'sandybrown','sandybrown',
-                    'khaki','khaki',
-                    'lightgreen','lightgreen',
-                    'firebrick', 'firebrick',
-                    'gold','indianred','royalblue','darkviolet'
-                    ],
-            edgecolor='black',
-                    )
-
-plt.rcParams['figure.dpi']=300
-
-# Show the legend
-plt.legend(loc='upper right',  bbox_to_anchor=(1, 1.2), ncol =4 ,prop={'size': 8})
-
-plt.ylabel('LCOW ($/m3)')
-plt.xlabel('Solar size (MW)')
-plt.title('')
-# Display the chart
-plt.show()

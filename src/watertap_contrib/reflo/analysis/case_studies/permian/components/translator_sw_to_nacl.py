@@ -55,13 +55,13 @@ class Translator_SW_to_NaCl_Data(TranslatorData):
 
         super().build()
 
-        @self.Constraint(doc="Isothermal")
-        def eq_temperature(b):
-            return b.properties_in[0].temperature == b.properties_out[0].temperature
+        # @self.Constraint(doc="Isothermal")
+        # def eq_temperature(b):
+        #     return b.properties_in[0].temperature == b.properties_out[0].temperature
 
-        @self.Constraint(doc="Isobaric")
-        def eq_pressure(b):
-            return b.properties_in[0].pressure == b.properties_out[0].pressure
+        # @self.Constraint(doc="Isobaric")
+        # def eq_pressure(b):
+        #     return b.properties_in[0].pressure == b.properties_out[0].pressure
 
         @self.Constraint(
             doc="Equality mass flow water equation",

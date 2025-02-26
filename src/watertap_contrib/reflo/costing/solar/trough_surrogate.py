@@ -23,73 +23,73 @@ def build_trough_surrogate_cost_param_block(blk):
 
     costing = blk.parent_block()
 
-    blk.cost_per_land_area = pyo.Var(
+    blk.cost_per_land_area = pyo.Param(
         initialize=10000,
         units=costing.base_currency / pyo.units.acre,
-        bounds=(0, None),
+        # bounds=(0, None),
         doc="Cost per acre of land",
     )
 
-    blk.cost_per_total_aperture_area = pyo.Var(
+    blk.cost_per_total_aperture_area = pyo.Param(
         initialize=373,
         units=costing.base_currency / pyo.units.m**2,
-        bounds=(0, None),
+        # bounds=(0, None),
         doc="Cost per m2 of total aperture area (includes site improvement 16 $/m2, solar field 297 $/m2, HTF system 60 $/m2)",
     )
 
-    blk.cost_per_heat_sink = pyo.Var(
+    blk.cost_per_heat_sink = pyo.Param(
         initialize=120,
         units=costing.base_currency / pyo.units.kW,
-        bounds=(0, None),
+        # bounds=(0, None),
         doc="Cost for expenses related to installation of the heat sink, including labor and equipment per kWh (thermal) heat load",
     )
 
-    blk.cost_per_balance_of_plant = pyo.Var(
+    blk.cost_per_balance_of_plant = pyo.Param(
         initialize=90,
         units=costing.base_currency / pyo.units.kW,
-        bounds=(0, None),
+        # bounds=(0, None),
         doc="Cost per thermal kilowatt of heat sink capacity for expenses related to installation of the heat sink, including labor and equipment",
     )
 
-    blk.cost_per_storage_capital = pyo.Var(
+    blk.cost_per_storage_capital = pyo.Param(
         initialize=62,
         units=costing.base_currency / pyo.units.kWh,
-        bounds=(0, None),
+        # bounds=(0, None),
         doc="Cost per kWh (thermal) for the trough plant thermal storage",
     )
 
-    blk.contingency_frac_direct_cost = pyo.Var(
+    blk.contingency_frac_direct_cost = pyo.Param(
         initialize=0.07,
         units=pyo.units.dimensionless,
-        bounds=(0, 1),
+        # bounds=(0, 1),
         doc="Fraction of direct costs for contingency",
     )
 
-    blk.indirect_frac_direct_cost = pyo.Var(
+    blk.indirect_frac_direct_cost = pyo.Param(
         initialize=0.11,
         units=pyo.units.dimensionless,
-        bounds=(0, 1),
+        # bounds=(0, 1),
         doc="Fraction of direct costs for indirect costs associated with engineer-procure-construction (EPC)",
     )
 
-    blk.tax_frac_direct_cost = pyo.Var(
+    blk.tax_frac_direct_cost = pyo.Param(
         initialize=0.05,
         units=pyo.units.dimensionless,
-        bounds=(0, 1),
+        # bounds=(0, 1),
         doc="Fraction of direct costs applicable for sales tax",
     )
 
-    blk.fixed_operating_by_capacity = pyo.Var(
+    blk.fixed_operating_by_capacity = pyo.Param(
         initialize=103758,
         units=costing.base_currency,
-        bounds=(0, None),
+        # bounds=(0, None),
         doc="Fixed operating cost of trough plant in SAM. Not a function of electricity generated",
     )
 
-    blk.variable_operating_by_generation = pyo.Var(
+    blk.variable_operating_by_generation = pyo.Param(
         initialize=0.002,
         units=costing.base_currency / (pyo.units.kWh),
-        bounds=(0, None),
+        # bounds=(0, None),
         doc="Variable operating cost of trough plant per kWh generated",
     )
 
