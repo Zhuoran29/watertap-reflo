@@ -41,6 +41,7 @@ flow_list = [
     "lime", 
     "CO2",
     "mgcl2",
+    "NaCl_recovered"
 ]
 
 unit_colors = plt.cm.tab20(np.arange(len(unit_list)).astype(int))
@@ -81,6 +82,7 @@ def case_study_stacked_plot(
         labelspacing=0.2,
         columnspacing=0.9,
     ),
+    xlim = None,
 ):
 
     if flow_hatch is None:
@@ -218,7 +220,7 @@ def case_study_stacked_plot(
                     row.loc[f"{treatment_costing_blk}.aggregate_flow_costs[{flow_name}]"] / denominator
                 )  # $ / m3
                 agg_flow_lcow[flow_name].append(flow_lcow)
-                print(flow_label, " cost =", row.loc[
+                print(flow_label, " cost1 =", row.loc[
                     f'{treatment_costing_blk}.aggregate_flow_costs[{flow_name}]'
                 ])
             except KeyError:
@@ -236,7 +238,7 @@ def case_study_stacked_plot(
                         row.loc[f"{costing_blk}.total_{flow_name}_operating_cost"] / denominator
                     )  # $ / m3
                     agg_flow_lcow[flow_name].append(flow_lcow)
-                    print(flow_label, " cost =", row.loc[
+                    print(flow_label, " cost2 =", row.loc[
                         f"{costing_blk}.total_{flow_name}_operating_cost"
                     ])
                 except KeyError:
@@ -317,8 +319,11 @@ def case_study_stacked_plot(
     ax.set_xlabel(ax_dict["xlabel"], fontsize=label_fontsize)
     ax.set_ylabel(ax_dict["ylabel"], fontsize=label_fontsize)
     ax.tick_params(axis="both", labelsize=tick_fontsize)
-    ax.set_xlim(df.index.min(), df.index.max())
-    # ax.set_ylim(0, np.ceil(max(actual_lcow)))
+    if xlim:
+        ax.set_xlim(xlim[0],xlim[1])
+    else:
+        ax.set_xlim(df.index.min(), df.index.max())
+    ax.set_ylim(0, np.ceil(max(actual_lcow)*1.15))
 
     plt.tight_layout()
 

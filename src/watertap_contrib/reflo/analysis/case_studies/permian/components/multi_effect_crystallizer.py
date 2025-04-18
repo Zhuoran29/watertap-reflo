@@ -1,3 +1,4 @@
+#%%
 import pathlib
 from pyomo.environ import (
     ConcreteModel,
@@ -75,28 +76,20 @@ def build_mec(m, blk) -> None:
 
 def set_mec_op_conditions(m, 
                           blk,
-                          operating_pressures = [0.4455, 0.2758, 0.1651, 0.095],
-                          nacl_yield = 0.8,
+                          operating_pressures = [0.45, 0.25, 0.208, 0.095],
+                          feed_H2O = 153.34422736111105, #MGD
+                          feed_NaCl = 38.336056840277756, #g/L
+                          nacl_yield = 0.9,
                           ) -> None :
     
     mec = blk.unit
 
     # Guessed values for initialization
-    flow_in = 3.5
-    rho = 1000 * pyunits.kg / pyunits.m**3
-    conc_in = 160 * pyunits.g / pyunits.L
     feed_pressure = 101325
     feed_temperature = 273.15 + 20
     ### TOTAL GOING INTO MEC
-    flow_vol_in = pyunits.convert(
-        flow_in * pyunits.Mgallons / pyunits.day, to_units=pyunits.m**3 / pyunits.s
-    )
-    flow_mass_phase_water_total = pyunits.convert(
-        flow_vol_in * rho, to_units=pyunits.kg / pyunits.s
-    )
-    flow_mass_phase_salt_total = pyunits.convert(
-        flow_vol_in * conc_in, to_units=pyunits.kg / pyunits.s
-    )
+    flow_mass_phase_water_total = feed_H2O
+    flow_mass_phase_salt_total = feed_NaCl
     ### TOTAL INTO EACH EFFECT INITIAL
     """
     Note: In the initial solve of the system, assume the total feed flow rate is 1 kg/s,
@@ -104,8 +97,8 @@ def set_mec_op_conditions(m,
     """
     # flow_mass_phase_water_per = 116.2473764168908 / 100 * pyunits.kg / pyunits.s
     # flow_mass_phase_salt_per = 28.478213652777765 / 100 * pyunits.kg / pyunits.s
-    flow_mass_phase_water_per = 116 / 100 * pyunits.kg / pyunits.s
-    flow_mass_phase_salt_per = 28 / 100 * pyunits.kg / pyunits.s
+    flow_mass_phase_water_per = flow_mass_phase_water_total /(flow_mass_phase_water_total + flow_mass_phase_salt_total) * pyunits.kg / pyunits.s
+    flow_mass_phase_salt_per = flow_mass_phase_salt_total  /(flow_mass_phase_water_total + flow_mass_phase_salt_total) * pyunits.kg / pyunits.s
 
     saturated_steam_pressure = 101325 * pyunits.Pa + pyunits.convert(
         3 * pyunits.bar, to_units=pyunits.Pa
@@ -136,11 +129,11 @@ def set_mec_op_conditions(m,
         eff.effect.pressure_operating.fix(
             pyunits.convert(op_pressure * pyunits.bar, to_units=pyunits.Pa)
         )
-        eff.effect.overall_heat_transfer_coefficient.fix(0.1)
+        eff.effect.overall_heat_transfer_coefficient.fix(1.3)
 
     first_effect = mec.effects[1].effect
 
-    first_effect.overall_heat_transfer_coefficient.fix(0.1)
+    first_effect.overall_heat_transfer_coefficient.fix(1.3)
     first_effect.heating_steam[0].pressure_sat
     first_effect.heating_steam[0].dh_vap_mass
     first_effect.heating_steam.calculate_state(
@@ -172,11 +165,42 @@ def init_mec(blk):
         eff.effect.initialize()
 
     ### UNFIX THE INLET FLOW RATES OF EACH EFFECT
+
+    mec.feed_effect = Var(
+        mec.Effects,
+        initialize=0.25,
+        bounds=(0, 1),
+        units=pyunits.dimensionless,
+        doc="Fraction of feed entering each effect",
+    )
+
     for n, eff in mec.effects.items():
         if n > 1:
             eff.effect.properties_in[0].flow_mass_phase_comp["Liq", "H2O"].unfix()
             eff.effect.properties_in[0].flow_mass_phase_comp["Liq", "NaCl"].unfix()
             eff.effect.properties_in[0].conc_mass_phase_comp["Liq", "NaCl"].fix()
+
+            # eff.cryst_feed_H2O_constraint = Constraint(
+            # expr = mec.effects[n].effect.properties_in[0].conc_mass_phase_comp["Liq", "NaCl"]
+            #     == mec.effects[1].effect.properties_in[0].conc_mass_phase_comp["Liq", "NaCl"]
+            # )
+
+    # @mec.Constraint(mec.Effects,
+    #                 mec.effects[1].effect.config.property_package.solute_set,
+    #                 doc="feed fraction")
+    # def eq_feed_mass_flow_effects(b,n,j):
+    #     return (
+    #         b.effects[n].effect.properties_in[0].flow_mass_phase_comp["Liq", j]
+    #         == b.feed_effect[n] 
+    #         * b.inlet.flow_mass_phase_comp[0, "Liq", j]
+    #     )    
+    
+    # @mec.Constraint(doc="mass balance")
+    # def eq_feed_mass_balance(b):
+    #     return (
+    #         sum(b.feed_effect[n] for n in b.Effects)
+    #         == 1
+    #     )
 
     for n, eff in mec.effects.items():
         if n == 1:
@@ -222,8 +246,8 @@ def unfix_mec(blk):
     mec.inlet.pressure[0].unfix()
 
 def mec_rescaling(blk,
-                  flow_mass_phase_water_total = 116.247/10,
-                  flow_mass_phase_salt_total = 28.478/10):
+                  flow_mass_phase_water_total = 116.247,
+                  flow_mass_phase_salt_total = 28.478):
 
     """
     Note: Rescaling is probably needed for extremely large feed flow,
@@ -239,16 +263,24 @@ def mec_rescaling(blk,
         index=("Liq", "NaCl"),
     )
     blk.properties.set_default_scaling(
-        "flow_mass_phase_comp", 10, index=("Vap", "H2O")
+        "flow_mass_phase_comp", 
+        1 / value(flow_mass_phase_water_total), 
+        index=("Vap", "H2O")
     )
     blk.properties.set_default_scaling(
-        "flow_mass_phase_comp", 1e-2, index=("Sol", "NaCl")
+        "flow_mass_phase_comp", 
+        1 / value(flow_mass_phase_salt_total), 
+        index=("Sol", "NaCl")
     )
     blk.vapor_properties.set_default_scaling(
-        "flow_mass_phase_comp", 1e-2, index=("Vap", "H2O")
+        "flow_mass_phase_comp",
+        1 / value(flow_mass_phase_water_total), 
+        index=("Vap", "H2O")
     )
     blk.vapor_properties.set_default_scaling(
-        "flow_mass_phase_comp", 1, index=("Liq", "H2O")
+        "flow_mass_phase_comp", 
+        1 / value(flow_mass_phase_water_total), 
+        index=("Liq", "H2O")
     )
 
 
@@ -257,6 +289,7 @@ def add_mec_costing(m, blk, flowsheet_costing_block=None):
         flowsheet_costing_block = m.fs.costing
     blk.unit.costing = UnitModelCostingBlock(
             flowsheet_costing_block=flowsheet_costing_block,
+            costing_method_arguments={"cost_work_as": "heat"},
         )
 
 
@@ -288,28 +321,45 @@ if __name__ == "__main__":
     m.fs.costing = TreatmentCosting()
     build_mec(m, m.fs)
 
-    set_mec_op_conditions(m, m.fs)
+    feed_H2O= 111.14146762116363
+    feed_NaCl = 28.47821365277779
+    set_mec_op_conditions(m, m.fs,
+                          operating_pressures = [0.4455, 0.2758, 0.1651, 0.095],
+                          feed_H2O = feed_H2O,
+                          feed_NaCl = feed_NaCl,
+                          nacl_yield = 0.9,)
     init_mec(m.fs)
     unfix_mec(m.fs)
 
-    flow_mass_phase_water_total = 11.6
-    flow_mass_phase_salt_total = 2.8
-
     m.fs.unit.inlet.flow_mass_phase_comp[0, "Liq", "H2O"].fix(
-        flow_mass_phase_water_total
+        feed_H2O
     )
     m.fs.unit.inlet.flow_mass_phase_comp[0, "Liq", "NaCl"].fix(
-        flow_mass_phase_salt_total
+        feed_NaCl
     )
 
     m.fs.unit.inlet.temperature[0].fix(273.15 + 30.51)
     m.fs.unit.inlet.pressure[0].fix(101325)
-    mec_rescaling(m.fs)
+    mec_rescaling(m.fs,
+                  flow_mass_phase_water_total = feed_H2O,
+                  flow_mass_phase_salt_total = feed_NaCl)
     add_mec_costing(m, m.fs)
 
-    print('')
-    print('here')
-    print('')
     m.fs.unit.inlet.display()
 
     solve(m)
+    print('feed conc', feed_NaCl / (feed_H2O+feed_NaCl))
+
+#%% 
+    conc = []
+    fail = []
+    for i in [110,120,130,140,150]:
+        for j in [20,25,30,35,40]:
+            try:
+                m.fs.unit.inlet.flow_mass_phase_comp[0, "Liq", "H2O"].fix(i)
+                m.fs.unit.inlet.flow_mass_phase_comp[0, "Liq", "NaCl"].fix(j)
+                solve(m)
+                conc.append((i,j,j/(i+j)))
+            except:
+                fail.append((i,j,j/(i+j)))
+

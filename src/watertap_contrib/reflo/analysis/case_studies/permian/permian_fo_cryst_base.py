@@ -30,6 +30,7 @@ from idaes.models.unit_models import (
 )
 from idaes.core.util.model_statistics import *
 from idaes.core.util.initialization import propagate_state
+from idaes.core import MaterialBalanceType
 
 from watertap.core.solvers import get_solver
 from watertap_contrib.reflo.core.wt_reflo_database import REFLODatabase
@@ -38,6 +39,7 @@ from watertap.core.zero_order_properties import WaterParameterBlock as ZO
 from watertap.core.util.model_diagnostics.infeasible import *
 from watertap.core.util.initialization import *
 from watertap.property_models.seawater_prop_pack import SeawaterParameterBlock
+from watertap.property_models.unit_specific.cryst_prop_pack import NaClParameterBlock
 from watertap_contrib.reflo.costing import (
     TreatmentCosting,
     EnergyCosting,
@@ -59,31 +61,32 @@ rho = 1000 * pyunits.kg / pyunits.m**3
 solver = get_solver()
 
 __all__ = [
-    "build_permian_FO",
+    "build_permian_FO_cryst",
     "set_operating_conditions",
     "add_treatment_costing",
     "add_energy_costing",
     "set_permian_scaling",
     "init_system",
-    "run_permian_FO",
+    "run_permian_FO_cryst",
 ]
 
-def build_permian_FO(permian_fo_config):
+def build_permian_FO_cryst(permian_fo_config):
     m = ConcreteModel()
     m.fs = FlowsheetBlock(dynamic=False)
     m.db = REFLODatabase()
 
     m.fs.treatment = treat = Block()
-    # m.fs.energy = energy = Block()
-    # m.fs.energy.cst = FlowsheetBlock()
-    # build_cst(m.fs.energy.cst)
+    m.fs.energy = energy = Block()
+    m.fs.energy.cst = FlowsheetBlock()
+    build_cst(m.fs.energy.cst)
 
     m.fs.properties = ZO(solute_list=["tds"])
     m.fs.properties_feed = SeawaterParameterBlock()
     m.fs.properties_draw = FODrawSolutionParameterBlock()
+    m.fs.properties_NaCl = NaClParameterBlock()
 
     treat.feed = Feed(property_package=m.fs.properties)
-    treat.product = Product(property_package=m.fs.properties_feed)
+    treat.product = Product(property_package=m.fs.properties_NaCl)
 
     # Add translator blocks
     treat.zo_to_sw_feed = Translator_ZO_to_SW(
@@ -102,6 +105,10 @@ def build_permian_FO(permian_fo_config):
         inlet_property_package = m.fs.properties_draw,
         outlet_property_package= m.fs.properties_feed,
     )
+    treat.draw_to_nacl = Translator_Draw_to_NaCl(
+        inlet_property_package = m.fs.properties_draw,
+        outlet_property_package= m.fs.properties_NaCl,
+    )
 
     # Add components
     treat.chem_addition = FlowsheetBlock(dynamic=False)
@@ -113,14 +120,14 @@ def build_permian_FO(permian_fo_config):
     treat.cart_filt = FlowsheetBlock(dynamic=False)
     build_cartridge_filtration(m, treat.cart_filt)
 
-    treat.FO = build_fo_trevi_flowsheet(feed_vol_flow     =permian_fo_config["feed_vol_flow"], 
-                                        feed_TDS_mass     =permian_fo_config["feed_TDS_mass"], 
+    treat.FO = build_fo_trevi_flowsheet(feed_vol_flow     =permian_fo_config["feed_vol_flow"],
+                                        feed_TDS_mass     =permian_fo_config["feed_TDS_mass"],
                                         recovery_ratio    =permian_fo_config["recovery_ratio"],
-                                        RO_recovery_ratio =permian_fo_config["RO_recovery_ratio"], 
-                                        NF_recovery_ratio =permian_fo_config["NF_recovery_ratio"], 
+                                        RO_recovery_ratio =permian_fo_config["RO_recovery_ratio"],
+                                        NF_recovery_ratio =permian_fo_config["NF_recovery_ratio"],
                                         feed_temperature  =permian_fo_config["feed_temperature"],
-                                        strong_draw_temp  =permian_fo_config["strong_draw_temp"],  
-                                        strong_draw_mass  =permian_fo_config["strong_draw_mass_frac"],  
+                                        strong_draw_temp  =permian_fo_config["strong_draw_temp"],
+                                        strong_draw_mass  =permian_fo_config["strong_draw_mass_frac"],
                                         )
 
     treat.DWI = FlowsheetBlock(dynamic=False)
@@ -135,9 +142,9 @@ def build_permian_FO(permian_fo_config):
     )
 
     # BUILD PRODUCT STREAM
-    # feed (1)> chem_addition (2)> EC (3)> cart_filt 
+    # feed (1)> chem_addition (2)> EC (3)> cart_filt
     #      (4)> ZO_to_SW_translator (5)> FO (6)> Draw_to_SW_translator (7)> product
-    
+
     treat.feed_to_chem_addition = Arc(
         source=treat.feed.outlet, destination=treat.chem_addition.feed.inlet
     ) # (1)
@@ -154,11 +161,11 @@ def build_permian_FO(permian_fo_config):
         source=treat.zo_to_sw_feed.outlet, destination=treat.FO.fs.fo.feed
     ) # (5)
     treat.fo_to_translator = Arc(
-        source=treat.FO.fs.S2.fresh_water, destination=treat.draw_to_sw.inlet
+        source=treat.FO.fs.S2.fresh_water, destination=treat.draw_to_nacl.inlet
     ) # (6)
-    treat.fo_translator_to_product = Arc(
-        source=treat.draw_to_sw.outlet, destination=treat.product.inlet
-    ) # (7)
+    # treat.fo_translator_to_product = Arc(
+    #     source=treat.draw_to_sw.outlet, destination=treat.product.inlet
+    # ) # (7)
 
     # BUILD DISPOSAL STREAM
     #        EC (1)> ZO_to_SW_translator (3)> disposal_mixer (6)> DWI
@@ -185,7 +192,7 @@ def build_permian_FO(permian_fo_config):
     ) # (6)
 
     TransformationFactory("network.expand_arcs").apply_to(m)
-    
+
     return m
 
 def get_stream_density(Qin=5, tds=130, **kwargs):
@@ -207,8 +214,8 @@ def get_stream_density(Qin=5, tds=130, **kwargs):
     )
     m.fs.feed_sw.initialize()
     rho = (
-        # value(m.fs.feed_sw.properties[0].dens_mass_phase["Liq"])
-        1000
+        value(m.fs.feed_sw.properties[0].dens_mass_phase["Liq"])
+        # 1000
         * pyunits.kg
         / pyunits.m**3
     )
@@ -217,6 +224,7 @@ def get_stream_density(Qin=5, tds=130, **kwargs):
 
 def set_operating_conditions(m, operating_condition, **kwargs):
     Qin, tds = operating_condition["feed_vol_flow"], operating_condition["feed_tds"]
+
 
     global flow_mass_water, flow_mass_tds, flow_in
 
@@ -239,7 +247,7 @@ def set_operating_conditions(m, operating_condition, **kwargs):
     set_cart_filt_op_conditions(m, m.fs.treatment.cart_filt)
 
     # Set energy system condition
-    # set_cst_op_conditions(m.fs.energy.cst, heat_load=87.7751, hours_storage=24)
+    set_cst_op_conditions(m.fs.energy.cst, heat_load=70, hours_storage=24)
 
 def set_permian_scaling(m, **kwargs):
 
@@ -290,7 +298,7 @@ def init_system(m, permian_fo_config, CST_config):
     treat = m.fs.treatment
 
     treat.feed.initialize()
-    propagate_state(arc = treat.feed_to_chem_addition)   
+    propagate_state(arc = treat.feed_to_chem_addition)
 
     init_chem_addition(m, treat.chem_addition)
     propagate_state(arc = treat.chem_addition_to_ec)
@@ -316,12 +324,12 @@ def init_system(m, permian_fo_config, CST_config):
     # treat.zo_to_sw_cart_filt_disposal.initialize()
     propagate_state(arc = treat.cart_filt_disposal_translator_to_SW_mixer)
 
-    fix_dof_and_initialize(treat.FO,                
+    fix_dof_and_initialize(treat.FO,
                            strong_draw_mass_frac =permian_fo_config["strong_draw_mass_frac"],
                            product_draw_mass_frac=permian_fo_config["product_draw_mass_frac"],
                            RO_recovery_ratio     =permian_fo_config["RO_recovery_ratio"],
                            NF_recovery_ratio     =permian_fo_config["NF_recovery_ratio"],)
-    
+
     # unfix FO fs and set operating point
     treat.FO.fs.HX1.area.unfix()
     treat.FO.fs.HX2.area.unfix()
@@ -332,9 +340,11 @@ def init_system(m, permian_fo_config, CST_config):
     treat.FO.fs.fo.feed_props[0].flow_mass_phase_comp["Liq", "TDS"].unfix()
 
     propagate_state(arc = treat.fo_to_translator)
-    treat.draw_to_sw.initialize()
+    treat.draw_to_nacl.outlet.flow_mass_phase_comp[0, "Vap", "H2O"].fix(0)
+    treat.draw_to_nacl.outlet.flow_mass_phase_comp[0, "Sol", "NaCl"].fix(0)
+    treat.draw_to_nacl.initialize()
 
-    propagate_state(arc = treat.fo_translator_to_product)
+    # propagate_state(arc = treat.fo_translator_to_product)
     treat.product.pressure[0].fix(101325)
     treat.product.initialize()
 
@@ -348,7 +358,7 @@ def init_system(m, permian_fo_config, CST_config):
 
     treat.zo_to_sw_ec_disposal.initialize()
     treat.zo_to_sw_cart_filt_disposal.initialize()
-    
+
     treat.disposal_SW_mixer.initialize()
     propagate_state(arc = treat.SW_mixer_to_DWI)
 
@@ -356,11 +366,81 @@ def init_system(m, permian_fo_config, CST_config):
     treat.DWI.unit.properties[0].pressure.fix()
     init_dwi(m, treat.DWI)
 
-    # init_cst(m.fs.energy.cst, 
-    #         #  storage=CST_config['storage'], 
-    #         #  heat_load=CST_config['heat_load']
-    #          )
-    # results = solver.solve(m.fs.energy.cst)
+    init_cst(m.fs.energy.cst,
+            #  storage=CST_config['storage'],
+            #  heat_load=CST_config['heat_load']
+             )
+    results = solver.solve(m.fs.energy.cst)
+
+def build_cryst(m, cryst_config):
+    treat = m.fs.treatment
+
+    total_feed_H2O_mass = treat.disposal_SW_mixer.outlet.flow_mass_phase_comp[0, "Liq", "H2O"].value
+    total_feed_NaCl_mass = treat.disposal_SW_mixer.outlet.flow_mass_phase_comp[0, "Liq", "TDS"].value
+
+    treat.mec = FlowsheetBlock(dynamic=False)
+    build_mec(m, treat.mec)
+
+    set_mec_op_conditions(m, m.fs.treatment.mec,
+                          feed_H2O= total_feed_H2O_mass,
+                          feed_NaCl = total_feed_NaCl_mass,
+                          nacl_yield=cryst_config['yield'])
+    init_mec(treat.mec)
+    unfix_mec(treat.mec)
+
+    treat.mec.unit.inlet.flow_mass_phase_comp[0, "Liq", "H2O"].fix(
+        total_feed_H2O_mass
+    )
+    treat.mec.unit.inlet.flow_mass_phase_comp[0, "Liq", "NaCl"].fix(
+        total_feed_NaCl_mass
+    )
+
+    treat.mec.unit.inlet.temperature[0].fix(treat.disposal_SW_mixer.outlet.temperature[0].value)
+    treat.mec.unit.inlet.pressure[0].fix(101325)
+    # mec_rescaling(m.fs,
+    #               flow_mass_phase_water_total = total_feed_H2O_mass,
+    #               flow_mass_phase_salt_total = total_feed_NaCl_mass)
+
+    treat.product_NaCl_mixer = Mixer(
+        property_package=m.fs.properties_NaCl,
+        num_inlets=2,
+        inlet_list=["fo_product", "cryst_product"],
+        material_balance_type=MaterialBalanceType.componentPhase,
+        energy_mixing_type=MixingType.extensive,
+        momentum_mixing_type=MomentumMixingType.none,
+    )
+
+    treat.fo_translator_to_product_NaCl_mixer = Arc(
+        source=treat.draw_to_nacl.outlet, destination=treat.product_NaCl_mixer.fo_product,
+    ) # (7)
+    treat.cryst_to_product_NaCl_mixer = Arc(
+        source=treat.mec.unit.outlet, destination=treat.product_NaCl_mixer.cryst_product,
+    ) # (8)
+    treat.product_NaCl_mixer_to_product = Arc(
+        source=treat.product_NaCl_mixer.outlet, destination=treat.product.inlet
+    ) # (9)
+
+    TransformationFactory("network.expand_arcs").apply_to(m)
+
+    propagate_state(arc = treat.fo_translator_to_product_NaCl_mixer)
+    propagate_state(arc=  treat.cryst_to_product_NaCl_mixer)
+    treat.product_NaCl_mixer.initialize()
+    propagate_state(arc = treat.product_NaCl_mixer_to_product)
+    treat.product.pressure.fix(101325)
+    treat.product.initialize()
+
+    add_mec_costing(m, m.fs.treatment.mec, flowsheet_costing_block=m.fs.treatment.costing)
+    m.fs.treatment.costing.nacl_recovered.cost.set_value(cryst_config['nacl_recover_price'])
+    m.fs.treatment.costing.del_component("aggregate_flow_electricity")
+    m.fs.treatment.costing.del_component("aggregate_flow_electricity_constraint")
+    m.fs.treatment.costing.del_component("aggregate_flow_heat")
+    m.fs.treatment.costing.del_component("aggregate_flow_heat_constraint")
+    m.fs.treatment.costing.del_component("aggregate_flow_aluminum")
+    m.fs.treatment.costing.del_component("aggregate_flow_aluminum_constraint")
+    m.fs.treatment.costing.del_component("aggregate_flow_hydrogen_peroxide")
+    m.fs.treatment.costing.del_component("aggregate_flow_hydrogen_peroxide_constraint")
+    m.fs.treatment.costing.cost_process()
+    # treat.costing.initialize()
 
 def add_treatment_costing(m):
 
@@ -376,10 +456,19 @@ def add_treatment_costing(m):
     )
 
     m.fs.treatment.FO.fs.fo.costing = UnitModelCostingBlock(flowsheet_costing_block=m.fs.treatment.costing)
-    
-    add_dwi_costing(m, m.fs.treatment.DWI, flowsheet_costing_block=m.fs.treatment.costing)
+
+    m.fs.treatment.costing.maintenance_labor_chemical_factor.fix(0.03)
 
     m.fs.treatment.costing.cost_process()
+
+    treat=m.fs.treatment
+    treat.costing.base_currency = pyunits.USD_2023
+    electricity_price =  value(pyunits.convert(0.0575 * pyunits.USD_2023, to_units=pyunits.USD_2018))
+    heat_price =value(pyunits.convert( 0.00894  * pyunits.USD_2023, to_units=pyunits.USD_2018))
+    treat.costing.electricity_cost.fix(electricity_price)
+    treat.costing.heat_cost.fix(heat_price)
+    treat.costing.initialize()
+
 
 def add_energy_costing(m, CST_config):
     energy = m.fs.energy
@@ -404,10 +493,11 @@ def add_energy_costing(m, CST_config):
     # energy.costing.aggregate_flow_heat.fix(CST_config["heat_flow"])
 
 
-def run_permian_FO(operating_condition,
+def run_permian_FO_cryst(operating_condition,
                    permian_fo_config,
-                   CST_config):
-    m = build_permian_FO(permian_fo_config)
+                   cryst_config,
+                   CST_config,):
+    m = build_permian_FO_cryst(permian_fo_config)
     treat = m.fs.treatment
 
     set_operating_conditions(m, operating_condition)
@@ -418,26 +508,33 @@ def run_permian_FO(operating_condition,
     init_system(m, permian_fo_config, CST_config)
 
     print('DOF after init: ', degrees_of_freedom(m))
-    results = solver.solve(m)
-    assert_optimal_termination(results)
+    # results = solver.solve(m)
+    # assert_optimal_termination(results)
 
     add_treatment_costing(m)
     # add_energy_costing(m,CST_config)
 
+    # Run pretrement-FO to derive cryst inlet properties
+    results = solver.solve(m)
+    assert_optimal_termination(results)
+
+    build_cryst(m, cryst_config=cryst_config)
+    results = solver.solve(m)
+    assert_optimal_termination(results)
+
+    # add_treatment_costing(m)
+    # add_energy_costing(m,CST_config)
+
     flow_vol = treat.product.properties[0].flow_vol_phase["Liq"]
 
-    treat.costing.base_currency = pyunits.USD_2023
-
-    electricity_price =  value(pyunits.convert(0.0575 * pyunits.USD_2023, to_units=pyunits.USD_2018))
-    heat_price =value(pyunits.convert( 0.00894  * pyunits.USD_2023, to_units=pyunits.USD_2018))
-    treat.costing.electricity_cost.fix(electricity_price)
-    treat.costing.heat_cost.fix(heat_price)
     treat.costing.add_LCOW(flow_vol)
-    treat.costing.add_specific_energy_consumption(flow_vol, name="SEC")
-    treat.costing.initialize()
+    # treat.costing.add_specific_energy_consumption(flow_vol, name="SEC")
+    # treat.costing.initialize()
 
     # scaling (based on grid participation), setup order
-    # deactivate constraints, 
+    # deactivate constraints,
+    electricity_price =  value(pyunits.convert(0.0575 * pyunits.USD_2023, to_units=pyunits.USD_2018))
+    heat_price =value(pyunits.convert( 0.00894  * pyunits.USD_2023, to_units=pyunits.USD_2018))
     # m.fs.costing = REFLOSystemCosting()
     # m.fs.costing.base_currency = pyunits.USD_2023
     # m.fs.costing.heat_cost_buy.fix(heat_price)
@@ -446,20 +543,21 @@ def run_permian_FO(operating_condition,
 
     # m.fs.energy.cst.unit.heat_load.unfix()
     # m.fs.energy.costing.aggregate_flow_heat.unfix()
-    # m.fs.costing.frac_heat_from_grid.fix(0.5)
+    # m.fs.costing.frac_heat_from_grid.fix(operating_condition["grid_fraction"])
 
     # m.fs.costing.initialize()
     # # m.fs.costing.add_LCOH()
     # m.fs.costing.add_LCOW(flow_vol)
     # m.fs.costing.add_LCOT(flow_vol)
 
+
     return m
 
 if __name__ == "__main__":
     permian_fo_config = {
-    "feed_vol_flow": 0.22*2, # initial value for fo model setup
+    "feed_vol_flow": 0.22/2, # initial value for fo model setup
     "feed_TDS_mass": 0.119, # mass fraction, 0.119 is about 130 g/L, 0.092 for 100 g/L, 0.19 for 200 g/L
-    "recovery_ratio": 0.165, # To get 250 g/L brine, select 0.485 for 130g/L, 0.612 for 100g/L, 0.165 for 200g/L
+    "recovery_ratio": 0.486, # To get 250 g/L brine, select 0.485 for 130g/L, 0.612 for 100g/L, 0.165 for 200g/L
     "RO_recovery_ratio":1,  # RO recovery ratio
     "NF_recovery_ratio":0.8,  # Nanofiltration recovery ratio
     "feed_temperature":25,
@@ -475,39 +573,45 @@ if __name__ == "__main__":
         "heat_load":25, # MW
         "heat_flow": -5000, # kW
     }
-
-    operating_condition = {
-    "feed_vol_flow": 9, # MGD
-    "feed_tds": 130 # g/L
+    cryst_config = {
+        "yield": 0.9,
+        "nacl_recover_price": 0,
     }
-    m = run_permian_FO(operating_condition,
-                            permian_fo_config,
-                            CST_config,)
+    operating_condition = {
+    "feed_vol_flow": 5, # MGD
+    "feed_tds": 130, # g/L
+    "grid_fraction": 0.5,
+    }
+    m = run_permian_FO_cryst(operating_condition,
+                        permian_fo_config,
+                        cryst_config,
+                        CST_config,)
     print('dof before solving', degrees_of_freedom(m))
     results = solver.solve(m)
     assert_optimal_termination(results)
 
     flow_vol = value(pyunits.convert(m.fs.treatment.product.properties[0].flow_vol_phase["Liq"],
                                         to_units=pyunits.m**3/pyunits.year))
-    
-    brine = value(m.fs.treatment.FO.fs.fo.brine_props[0].conc_mass_phase_comp["Liq","TDS"])
-    lcow = value(m.fs.treatment.costing.LCOW)
-    print('brine salinit', brine)
-    print('lcow', lcow)
+    lcot = value(m.fs.treatment.costing.LCOW)
+    # lcow = value(m.fs.costing.LCOW)
+    # # lcoh = value(m.fs.costing.LCOH)
+    # CRF = value(m.fs.costing.capital_recovery_factor)
+    capex_total = value(m.fs.treatment.costing.total_capital_cost)
+    opex_total = value(m.fs.treatment.costing.total_operating_cost)
 
+    print('brine', value(m.fs.treatment.FO.fs.fo.brine_props[0].conc_mass_phase_comp["Liq","TDS"]))
+    print('lcow', value(m.fs.treatment.costing.LCOW))
 
-#%% Sweep through FO_RR
-if __name__ == "__main__":
+#%% Parametric
     fail=[]
     heat=[]
     brine=[]
     grid_frac =[]
-    LCOW = []
-    feed_vol = []
+    cst_load = []
     permian_fo_config = {
-    "feed_vol_flow": 0.22, # initial value for fo model setup
-    "feed_TDS_mass": 0.039, # mass fraction, 0.119 is about 130 g/L, 0.092 for 100 g/L, 0.19 for 200 g/L
-    "recovery_ratio": 0.485,
+    "feed_vol_flow": 0.22/2, # initial value for fo model setup
+    "feed_TDS_mass": 0.119, # mass fraction, 0.119 is about 130 g/L, 0.092 for 100 g/L, 0.19 for 200 g/L
+    "recovery_ratio": 0.486,
     "RO_recovery_ratio":1,  # RO recovery ratio
     "NF_recovery_ratio":0.8,  # Nanofiltration recovery ratio
     "feed_temperature":25,
@@ -523,24 +627,57 @@ if __name__ == "__main__":
         "heat_load":25, # MW
         "heat_flow": -5000, # kW
     }
+    cryst_config = {
+        "yield": 0.9,
+        "nacl_recover_price": 0,
+    }
 
     operating_condition = {
     "feed_vol_flow": 5, # MGD
-    "feed_tds": 130 # g/L
+    "feed_tds": 130, # g/L
+    "grid_fraction": 0.6,
     }
-    m = run_permian_FO(operating_condition,
+    m = run_permian_FO_cryst(operating_condition,
                             permian_fo_config,
+                            cryst_config,
                             CST_config,)
     results_dict = build_results_dict(m, skips=["diffus_phase_comp"])
-    recovery_ratios = [0.349,0.351,0.36,0.37,0.38,0.39,0.40, 0.42, 0.44, 0.45, 0.47,0.48,0.485, 0.49, 0.5, 0.51,0.52,0.53,0.54,0.545,0.55,0.555,0.56]
+    recovery_ratios = [0.349,0.35,0.351, 0.361,0.369, 0.389, 0.391, 0.401, 0.433, 0.44, 0.45,0.461, 0.469,0.475,0.486, 0.494, 0.511,0.52,0.525,0.54,0.545]
     results_dict['fo_recovery_ratio'] = []
 
     for rr in recovery_ratios:
-        permian_fo_config["recovery_ratio"] = rr
+        permian_fo_config = {
+        "feed_vol_flow": 0.22/2, # initial value for fo model setup
+        "feed_TDS_mass": 0.119, # mass fraction, 0.119 is about 130 g/L, 0.092 for 100 g/L, 0.19 for 200 g/L
+        "recovery_ratio": rr,
+        "RO_recovery_ratio":1,  # RO recovery ratio
+        "NF_recovery_ratio":0.8,  # Nanofiltration recovery ratio
+        "feed_temperature":25,
+        "strong_draw_temp":25,  # Strong draw solution inlet temperature (C)
+        "strong_draw_mass_frac":0.9,  # Strong draw solution mass fraction
+        "product_draw_mass_frac": 0.01,   # FO product draw solution mass fraction
+        "HX1_cold_out_temp": 78 + 273.15, # HX1 coldside outlet temperature
+        "HX1_hot_out_temp": 32 + 273.15,  # HX1 hotside outlet temperature
+        }
 
+        CST_config = {
+            "storage":12, # hr
+            "heat_load":25, # MW
+            "heat_flow": -5000, # kW
+        }
+        cryst_config = {
+            "yield": 0.9,
+            "nacl_recover_price": 0,
+        }
+        operating_condition = {
+        "feed_vol_flow": 5, # MGD
+        "feed_tds": 130, # g/L
+        "grid_fraction": 0.5,
+        }
         try:
-            m = run_permian_FO(operating_condition,
+            m = run_permian_FO_cryst(operating_condition,
                             permian_fo_config,
+                            cryst_config,
                             CST_config,
                             )
             results = solver.solve(m)
@@ -549,22 +686,22 @@ if __name__ == "__main__":
             results_dict['fo_recovery_ratio'].append(rr*100)
             heat.append((rr,value(m.fs.treatment.FO.fs.fo.costing.thermal_energy_flow)))
             brine.append((rr, value(m.fs.treatment.FO.fs.fo.brine_props[0].conc_mass_phase_comp["Liq","TDS"])))
-            LCOW.append((rr, 100*value(m.fs.treatment.costing.LCOW)))
+            cst_load.append((rr, value(m.fs.energy.cst.unit.heat_load)))
             # grid_frac.append((rr,m.fs.costing.frac_heat_from_grid.value))
         # print(brine)
         except:
             brine.append((rr,'fail'))
             heat.append((rr,'fail'))
-            LCOW.append((rr,'fail'))
+            cst_load.append((rr,'fail'))
             # grid_frac.append((rr,'fail'))
-    
+
     df = pd.DataFrame.from_dict(results_dict)
-    df.to_csv('csv_results/FO_DWI_Base_old.csv')
+    df.to_csv('FO_Cryst_Base.csv')
 #%% plotting
     import pandas as pd
     from watertap_contrib.reflo.analysis.case_studies.permian import *
 
-    results_file = f"csv_results/FO_DWI_Base.csv"
+    results_file = f"csv_results/FO_Cryst_Base.csv"
     df = pd.read_csv(results_file)
 
     xcol = "fo_recovery_ratio"
@@ -576,7 +713,7 @@ if __name__ == "__main__":
         "EC": "fs.treatment.ec.unit.costing",
         "CF": "fs.treatment.cart_filt.unit.costing",
         "FO": "fs.treatment.FO.fs.fo.costing",
-        "DWI": "fs.treatment.DWI.unit.costing",
+        "MEC": "fs.treatment.mec.unit.costing",
         # "CST": "fs.energy.cst.unit.costing",
     }
 
@@ -601,17 +738,86 @@ if __name__ == "__main__":
         opex_hatch="\\\\\\",
         flow_hatch="..",
         leg_kwargs=dict(
-            loc="upper right",
+            loc="upper left",
             frameon=False,
             ncol=4,
-            fontsize= 9,
+            fontsize = 9,
             handlelength=1,
             handleheight=1,
             labelspacing=0.2,
             columnspacing=0.9,
         ),
-        xlim = (35,56),
     )
+# %% Parametric on NaCl price
+    import numpy as np
+    fail=[]
+    heat=[]
+    brine=[]
+    grid_frac =[]
+    cst_load = []
+    permian_fo_config = {
+    "feed_vol_flow": 0.22/2, # initial value for fo model setup
+    "feed_TDS_mass": 0.119, # mass fraction, 0.119 is about 130 g/L, 0.092 for 100 g/L, 0.19 for 200 g/L
+    "recovery_ratio": 0.486,
+    "RO_recovery_ratio":1,  # RO recovery ratio
+    "NF_recovery_ratio":0.8,  # Nanofiltration recovery ratio
+    "feed_temperature":25,
+    "strong_draw_temp":25,  # Strong draw solution inlet temperature (C)
+    "strong_draw_mass_frac":0.9,  # Strong draw solution mass fraction
+    "product_draw_mass_frac": 0.01,   # FO product draw solution mass fraction
+    "HX1_cold_out_temp": 78 + 273.15, # HX1 coldside outlet temperature
+    "HX1_hot_out_temp": 32 + 273.15,  # HX1 hotside outlet temperature
+    }
 
+    CST_config = {
+        "storage":12, # hr
+        "heat_load":25, # MW
+        "heat_flow": -5000, # kW
+    }
+    cryst_config = {
+        "yield": 0.9,
+        "nacl_recover_price": 0,
+    }
 
+    operating_condition = {
+    "feed_vol_flow": 5, # MGD
+    "feed_tds": 130, # g/L
+    "grid_fraction": 0.6,
+    }
+    m = run_permian_FO_cryst(operating_condition,
+                            permian_fo_config,
+                            cryst_config,
+                            CST_config,)
+    results_dict = build_results_dict(m, skips=["diffus_phase_comp"])
+    nacl_price = np.linspace(-0.02, 0, 10)
+    results_dict["nacl_price"] =[]
+
+    for v in nacl_price:            
+        cryst_config = {
+                "yield": 0.9,
+                "nacl_recover_price": v,
+            }
+        try:
+            m = run_permian_FO_cryst(operating_condition,
+                            permian_fo_config,
+                            cryst_config,
+                            CST_config,
+                            )
+            results = solver.solve(m)
+            assert_optimal_termination(results)
+            results_dict = results_dict_append(m, results_dict)
+            results_dict['nacl_price'].append(v)
+            heat.append((v,value(m.fs.treatment.FO.fs.fo.costing.thermal_energy_flow)))
+            brine.append((v, value(m.fs.treatment.FO.fs.fo.brine_props[0].conc_mass_phase_comp["Liq","TDS"])))
+            # cst_load.append((rr, value(m.fs.energy.cst.unit.heat_load)))
+            # grid_frac.append((rr,m.fs.costing.frac_heat_from_grid.value))
+        # print(brine)
+        except:
+            brine.append((v,'fail'))
+            heat.append((v,'fail'))
+            # cst_load.append((rr,'fail'))
+            # grid_frac.append((rr,'fail'))
+
+    df = pd.DataFrame.from_dict(results_dict)
+    df.to_csv('FO_Cryst_Base_naclprice.csv')
 # %%

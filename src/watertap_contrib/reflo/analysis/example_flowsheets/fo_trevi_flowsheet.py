@@ -360,6 +360,7 @@ def fix_dof_and_initialize(
     m.fs.S1.inlet.flow_mass_phase_comp[0, "Liq", "DrawSolution"].value = (
         m.fs.fo.product_props[0].flow_mass_phase_comp["Liq", "DrawSolution"].value
     )
+    
     m.fs.S1.to_HX1.flow_mass_phase_comp[0, "Liq", "H2O"].value = (
         m.fs.S1.inlet.flow_mass_phase_comp[0, "Liq", "H2O"].value / 2
     )
@@ -449,7 +450,7 @@ def fix_dof_and_initialize(
         m.fs.fo.product_props[0].flow_mass_phase_comp["Liq", "DrawSolution"].value
     )
 
-    
+    m.fs.S2.initialize()
     m.fs.S2.NF_reject.flow_mass_phase_comp[0, "Liq", "H2O"].value = (
         m.fs.fo.product_props[0].flow_mass_phase_comp["Liq", "H2O"].value
         * (1 - NF_recovery_ratio)
@@ -470,7 +471,6 @@ def fix_dof_and_initialize(
     )
     m.fs.S2.fresh_water.flow_mass_phase_comp[0, "Liq", "DrawSolution"].value = 0
 
-    m.fs.S2.initialize()
     # Initialize mixer M1
     m.fs.M1.weak_draw.flow_mass_phase_comp[0, "Liq", "H2O"].value = (
         m.fs.fo.weak_draw_props[0].flow_mass_phase_comp["Liq", "H2O"].value
@@ -493,8 +493,6 @@ def fix_dof_and_initialize(
         + m.fs.S2.NF_reject.flow_mass_phase_comp[0, "Liq", "DrawSolution"].value
     )
 
-    m.fs.M1.mixed_state[0].flow_vol_phase["Liq"]
-    m.fs.M1.initialize()
 
     # Initialize heaters
     m.fs.H1.initialize()
